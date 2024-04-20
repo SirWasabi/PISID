@@ -6,14 +6,22 @@ public class PassUtils {
 
     public static DateTimeFormatter DATEFORMAT = null;
     public static List<Corredor> CORREDORES;
+    public int gapRatos;
+    public int maxRatos;
+    public int alertaRatos = gapRatos * maxRatos;      //ver arredondamentos ainda
 
-    // data, leitura, sensor
-    public boolean checkErrorValue(String medicao) {
+    public String[] dataString(String medicao){
         String[] par = medicao.split(",");
         String[] aux = {"", "", ""};
-
         for(int i = 0; i != par.length; i++)
             aux[i] = par[i].split(":")[1];
+        return aux;
+    }
+    
+    
+    // data, leitura, sensor
+    public boolean checkErrorValue(String medicao) {
+        String[] aux = dataString(medicao);
 
         try {
             LocalDateTime.parse(aux[0], DATEFORMAT);
@@ -39,7 +47,29 @@ public class PassUtils {
             return(checkCorredores(CORREDORES ,Integer.parseInt(str.split(",")[1].split(":")[1]), Integer.parseInt(str.split(",")[2].split(":")[1])));
     }
 
+    private void processDataArray(List<String> dataArray) {
+            for (String data : dataArray) {
+                if(checkMedicao(dataArray)){
+                    String aux = dataString(dataArray);
+                    int ratosAtual = Integer.parseInt(aux[2]);
+                    if(ratosAtual > maxRatos){                                      //ainda falta associar as variaveis à sala correspondente
+                        Alerta critico = createAlertaCritico(aux[0], aux[2]);
+                        System.out.println(critico); //mandar sql
+                    }
+                    if(ratosAtual >= alertaRatos){
+                        Alerta intermedio = createAlertaIntermedio(aux[0], aux[2]);
+                        System.out.println(intermedio); //mandar sql
+                    }
+                }else{
+                    String[] aux = dataString(dataArray);
+                    Alerta avaria = createAlertaAvaria(aux[0], aux[1]);
+                    System.out.println(avaria); //mandar para o sql depois
+                }
+            }
+        }
+
     public static void main(String[] args) {
+        
     }
 
     public Alerta createAlertaAvaria(String datetime, String sala) {
