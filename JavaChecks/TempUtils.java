@@ -33,6 +33,9 @@ public class TempUtils {
             return true;
         }
 
+        if (Math.abs(med - lastmed) <= outlierGap)
+            lastmed = med;
+            
         return(Math.abs(med - lastmed) <= outlierGap);
     }
 
