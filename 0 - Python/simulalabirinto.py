@@ -31,7 +31,7 @@ def on_disconnectMqttRoom(client, userdata, rc):
         print("Unexpected MQTT disconnection. Will auto-reconnect")
     clientMqttRoom.on_connect = on_connectMqttRoom
     clientMqttRoom.on_disconnect = on_disconnectMqttRoom
-    clientMqttRoom.connect('tcp://broker.mqtt-dashboard.com', 1883)
+    clientMqttRoom.connect('broker.mqttdashboard.com', 1883)
            
 def on_connectMqttRoom(client, userdata, flags, rc):
     print("MQTT Room Connected with result code "+str(rc))
@@ -40,7 +40,7 @@ def on_connectMqttRoom(client, userdata, flags, rc):
 def sendMqttRoom(currentRoom, nextRoomToGo):
     jasonString="{Hora:\"" + str(datetime.now()) + "\", SalaOrigem:" + str(currentRoom) + ", SalaDestino:" + str(nextRoomToGo) + "}"
     try:
-        clientMqttRoom.publish("sid_4_vasco",jasonString,qos=0)
+        clientMqttRoom.publish("pisid_grupo4_maze",jasonString,qos=0)
         time.sleep(1) 
         clientMqttRoom.loop()       
         print(jasonString)
@@ -48,10 +48,10 @@ def sendMqttRoom(currentRoom, nextRoomToGo):
        print("Error sendMqttRoom")
        pass 
        
-clientMqttRoom = mqtt.Client(client_id="clientIDRoomTest")
+clientMqttRoom = mqtt.Client(client_id="clientIDRoom")
 clientMqttRoom.on_connect = on_connectMqttRoom
 clientMqttRoom.on_disconnect = on_disconnectMqttRoom
-clientMqttRoom.connect('broker.mqtt-dashboard.com', 1883)
+clientMqttRoom.connect('broker.mqttdashboard.com', 1883)
     
 numberMouses=5
 numberRooms=4
@@ -63,7 +63,7 @@ while True:
     totalmousefinished = 0
     mousesMoving=[]
     counter=0
-    clientMqttRoom.publish("sid_4_vasco","{Hora:\"2000-01-01 00:00:00\", SalaOrigem:0, SalaDestino:0}",qos=0)
+    clientMqttRoom.publish("pisid_grupo4_maze","{Hora:\"2000-01-01 00:00:00\", SalaOrigem:0, SalaDestino:0}",qos=0)
     mousesstarted = 0
     flag = True
     i = 0

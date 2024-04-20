@@ -8,10 +8,10 @@ from getpass import getpass
 def on_connectMqttTemp(client, userdata, flags, rc):
     print("MQTT Temperature Connected with result code "+str(rc))
 
-topic="sid_4_vasco"
+topic="pisid_grupo4_temp"
 clientMqttMovements = mqtt.Client()
 clientMqttMovements.on_connect = on_connectMqttTemp
-clientMqttMovements.connect('broker.mqtt-dashboard.com', 1883)
+clientMqttMovements.connect('broker.mqttdashboard.com', 1883)
 i=0
 while True:
     i = i+1            

@@ -1,3 +1,0 @@
-javac -cp .\mongo-java-driver-3.6.3.jar;.\org.eclipse.paho.client.mqttv3-1.1.0.jar;\jackson-mapper-asl-1.5.0.jar;.\bson-3.10.1.jar *.java
-jar cmf Manifest.mf CloudtoMongo.jar *.class  *.jar
-java -jar CloudToMongo.jar
