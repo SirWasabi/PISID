@@ -56,6 +56,8 @@ public class MongoMazeToJava {
         conn.connectMongo();
         conn.connectMySQL();
         conn.connectMazeMySQL();
+        conn.getMazeConfig();
+        conn.getMazeInfo();
         conn.requestWithTimer();
     }
 
@@ -124,9 +126,6 @@ public class MongoMazeToJava {
             Class.forName("org.mariadb.jdbc.Driver");
             conn_maze = DriverManager.getConnection(sql_maze_database_connection_to, sql_maze_database_user_to,
                     sql_maze_database_password_to);
-
-            getMazeConfig();
-            getMazeInfo();
         } catch (Exception e) {
             System.out.println("Mysql Server Destination down, unable to make the connection. " + e);
         }
@@ -184,7 +183,7 @@ public class MongoMazeToJava {
                 FindIterable<Document> docs;
 
                 if (lastObjectId == null) {
-                    docs = mongocol.find();
+                    docs = mongocol.find(); //TODO: if find() returns null gives exception
                 } else {
                     docs = mongocol.find(new Document("_id", new Document("$gt", lastObjectId)));
                 }
