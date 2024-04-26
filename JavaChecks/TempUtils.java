@@ -7,6 +7,18 @@ public class TempUtils {
 
     private double lastmed = 9999;
     private double outlierGap = 2.5;
+    private double tempIdeal;
+    private double varTemp;
+    private double gap;
+
+
+        public String[] dataString(String medicao){
+        String[] par = medicao.split(",");
+        String[] aux = {"", "", ""};
+        for(int i = 0; i != par.length; i++)
+            aux[i] = par[i].split(":")[1];
+        return aux;
+    }
 
     // data, leitura, sensor
     public boolean checkErrorValue(String medicao) {
@@ -45,6 +57,29 @@ public class TempUtils {
         } else 
             return(checkOutlier(Double.parseDouble(str.split(",")[1].split(":")[1])));
     }
+
+        private void processDataArray(List<String> dataArray) {
+            for (String data : dataArray) {
+                if(checkMedicao(dataArray)){
+                    String aux = dataString(dataArray);
+                    double tempAtual = Double.parseDouble(aux[1]);
+                    if(tempAtual > tempIdeal + gap * varTemp || tempAtual < tempIdeal - gap * varTemp){
+                        Alerta intermedio = createAlertaIntermedio(aux[0], aux[2], aux[1]);
+                        System.out.println(intermedio);   //mandar sql
+                    }
+                    if(tempAtual > tempIdeal + varTemp || tempAtual < tempIdeal + varTemp){
+                        Alerta critico = createAlertaCritico(aux[0], aux[2], aux[1]);
+                        System.out.println(critico);     //mandar sql
+                    }
+                    System.out.println(dataArray);     //mandar para o sql caso nao haja problemas
+                }else{
+                    String[] aux = dataString(dataArray);
+                    Alerta avaria = createAlertaAvaria(aux[0], aux[2], aux[1]);
+                    System.out.println(avaria); //mandar para o sql depois
+                }
+
+            }
+        }
 
     public static void main(String[] args) {
     }

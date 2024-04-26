@@ -60,6 +60,7 @@ public class PassUtils {
                         Alerta intermedio = createAlertaIntermedio(aux[0], aux[2]);
                         System.out.println(intermedio); //mandar sql
                     }
+                    System.out.println(dataArray);     //mandar para o sql caso nao haja problemas
                 }else{
                     String[] aux = dataString(dataArray);
                     Alerta avaria = createAlertaAvaria(aux[0], aux[1]);
