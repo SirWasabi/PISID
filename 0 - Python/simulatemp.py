@@ -11,7 +11,7 @@ def on_connectMqttTemp(client, userdata, flags, rc):
 topic="pisid_grupo4_temp"
 clientMqttMovements = mqtt.Client()
 clientMqttMovements.on_connect = on_connectMqttTemp
-clientMqttMovements.connect('broker.mqttdashboard.com', 1883)
+clientMqttMovements.connect('broker.mqtt-dashboard.com', 1883)
 i=0
 while True:
     i = i+1            
