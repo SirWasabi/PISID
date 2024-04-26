@@ -53,8 +53,8 @@ public class MongoMazeToJava {
         MongoMazeToJava conn = new MongoMazeToJava();
 
         conn.loadProperties();
-        // conn.connectMongo();
-        // conn.connectMySQL();
+        conn.connectMongo();
+        conn.connectMySQL();
         conn.connectMazeMySQL();
         conn.getMazeConfig();
         conn.getMazeInfo();
