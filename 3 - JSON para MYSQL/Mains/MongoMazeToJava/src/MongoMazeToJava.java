@@ -53,8 +53,8 @@ public class MongoMazeToJava {
         MongoMazeToJava conn = new MongoMazeToJava();
 
         conn.loadProperties();
-        conn.connectMongo();
-        conn.connectMySQL();
+        // conn.connectMongo();
+        // conn.connectMySQL();
         conn.connectMazeMySQL();
         conn.getMazeConfig();
         conn.getMazeInfo();
@@ -180,19 +180,25 @@ public class MongoMazeToJava {
         timer.schedule(new TimerTask() {
             @Override
             public void run() {
-                FindIterable<Document> docs;
+                FindIterable<Document> docs = null;
 
                 if (lastObjectId == null) {
-                    docs = mongocol.find(); //TODO: if find() returns null gives exception
+                    try {
+                        docs = mongocol.find();                    
+                    } catch (NullPointerException e) {
+                        System.out.println("No data yet on MongoDB");
+                    }
                 } else {
                     docs = mongocol.find(new Document("_id", new Document("$gt", lastObjectId)));
                 }
 
-                processData(docs);
+                if(docs != null) {
+                    processData(docs);
 
-                mongocol.deleteMany(new Document("_id", new Document("$lte", lastObjectId)));
+                    mongocol.deleteMany(new Document("_id", new Document("$lte", lastObjectId)));
 
-                System.out.println(lastObjectId.toString() + " - " + mongocol.count() + "\n");
+                    System.out.println(lastObjectId.toString() + " - " + mongocol.count() + "\n");
+                }
             }
         }, 0, frequency);
     }
