@@ -145,13 +145,11 @@ public class MongoMazeToJava {
                 Passage passage = new Passage(hour, originRoom, destinationRoom);
 
                 if (checkRoomMax(passage)) {
-                    writeAlertToSQL(hour_string, destinationRoom_string, hour_string, originRoom_string,
-                            destinationRoom_string);
+                    writeAlertToSQL(hour_string, destinationRoom_string, "CRITICO", "ROOM MAX");
                 }
 
                 if (checkInactivity(passage)) {
-                    writeAlertToSQL(hour_string, destinationRoom_string, hour_string, originRoom_string,
-                            destinationRoom_string);
+                    writeAlertToSQL(hour_string, destinationRoom_string, "CRITICO", "CRITICO - INATIVIDADE");
                 }
 
                 System.out
@@ -160,8 +158,7 @@ public class MongoMazeToJava {
 
                 writePassageToSQL(passage);
             } else {
-                writeAlertToSQL(hour_string, destinationRoom_string, hour_string, originRoom_string,
-                            destinationRoom_string);
+                writeAlertToSQL(hour_string, destinationRoom_string, "Avaria", "Avaria - WRONG DATA");
             }
         }
     }
@@ -215,8 +212,8 @@ public class MongoMazeToJava {
         }
     }
 
-    private void writeAlertToSQL(String hour, String sensor, String reading, String type, String message) {
-        Alert alert = new Alert(hour, null, null, null, type, message);
+    private void writeAlertToSQL(String hour, String room, String type, String message) {
+        Alert alert = new Alert(hour, room, null, null, type, message);
         System.out.println("Writing " + alert.getMessage() + " to SQL");
     }
 
