@@ -5,6 +5,7 @@ import java.io.*;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
@@ -30,12 +31,20 @@ public class MongoMazeToJava {
     static String mongo_collection = new String();
     static String mongo_authentication = new String();
 
-    static Connection connTo;
+    static Connection conn_sql;
     static String sql_database_connection_to = new String();
     static String sql_database_password_to = new String();
     static String sql_database_user_to = new String();
     static String sql_table_to = new String();
 
+    static Connection conn_maze;
+    static String sql_maze_database_connection_to = new String();
+    static String sql_maze_database_password_to = new String();
+    static String sql_maze_database_user_to = new String();
+    static String sql_maze_table_config = new String();
+    static String sql_maze_table_layout = new String();
+
+    static ObjectId lastObjectId = null;
     static long frequency;
     final String[] sql_columns = { "Hora", "SalaOrigem", "SalaDestino" };
     final DateTimeFormatter date_formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
@@ -44,10 +53,10 @@ public class MongoMazeToJava {
         MongoMazeToJava conn = new MongoMazeToJava();
 
         conn.loadProperties();
-        conn.connectMongo();
-        conn.connectMySQL();
-        conn.getMazeFromCloud();
-        conn.requestWithTimer();
+        // conn.connectMongo();
+        // conn.connectMySQL();
+        conn.connectMazeMySQL();
+        // conn.requestWithTimer();
     }
 
     public void loadProperties() {
@@ -67,6 +76,12 @@ public class MongoMazeToJava {
             sql_database_connection_to = p.getProperty("sql_database_connection_to");
             sql_database_password_to = p.getProperty("sql_database_password_to");
             sql_database_user_to = p.getProperty("sql_database_user_to");
+
+            sql_maze_table_config = p.getProperty("sql_maze_table_config");
+            sql_maze_table_layout = p.getProperty("sql_maze_table_layout");
+            sql_maze_database_connection_to = p.getProperty("sql_maze_database_connection_to");
+            sql_maze_database_password_to = p.getProperty("sql_maze_database_password_to");
+            sql_maze_database_user_to = p.getProperty("sql_maze_database_user_to");
 
             frequency = Long.parseLong(p.getProperty("frequency"));
         } catch (Exception e) {
@@ -96,18 +111,70 @@ public class MongoMazeToJava {
     public void connectMySQL() {
         try {
             Class.forName("org.mariadb.jdbc.Driver");
-            connTo = DriverManager.getConnection(sql_database_connection_to, sql_database_user_to,
+            conn_sql = DriverManager.getConnection(sql_database_connection_to, sql_database_user_to,
                     sql_database_password_to);
         } catch (Exception e) {
             System.out.println("Mysql Server Destination down, unable to make the connection. " + e);
         }
     }
 
-    public void getMazeFromCloud() {
+    public void connectMazeMySQL() {
         System.out.println("Getting maze \n");
+        try {
+            Class.forName("org.mariadb.jdbc.Driver");
+            conn_maze = DriverManager.getConnection(sql_maze_database_connection_to, sql_maze_database_user_to,
+                    sql_maze_database_password_to);
+
+            getMazeConfig();
+            getMazeInfo();
+        } catch (Exception e) {
+            System.out.println("Mysql Server Destination down, unable to make the connection. " + e);
+        }
     }
 
-    public ObjectId lastObjectId = null;
+    private void getMazeConfig() {
+        String command = "Select * FROM " + sql_maze_table_config;
+        try {
+            PreparedStatement statement = conn_maze.prepareStatement(command);
+            ResultSet result = statement.executeQuery();
+
+            while (result.next()) {
+                String temperaturaProgramada = result.getString("temperaturaprogramada");
+                String numeroSalas = result.getString("numerodesalas");
+
+                System.out.println(
+                        "Temperatura Programada: " + temperaturaProgramada + ", Numero de Salas: " + numeroSalas);
+            }
+
+            result.close();
+            statement.close();
+        } catch (Exception e) {
+            System.out.println("Error Inserting in the database . " + e);
+            System.out.println(command);
+        }
+    }
+
+    private void getMazeInfo() {
+        String command = "Select * FROM " + sql_maze_table_layout;
+        try {
+            PreparedStatement statement = conn_maze.prepareStatement(command);
+            ResultSet result = statement.executeQuery();
+
+            while (result.next()) {
+                String salaA = result.getString("salaa");
+                String salaB = result.getString("salab");
+                String centimetros = result.getString("centimetro");
+
+                System.out.println("Sala A: " + salaA + ", Sala B: " + salaB + ", Centimetro: " + centimetros);
+            }
+
+            result.close();
+            statement.close();
+        } catch (Exception e) {
+            System.out.println("Error Inserting in the database . " + e);
+            System.out.println(command);
+        }
+    }
 
     public void requestWithTimer() {
         Timer timer = new Timer();
@@ -199,7 +266,7 @@ public class MongoMazeToJava {
     private void writePassageToSQL(Passage passage) {
         String command = "Insert into " + sql_table_to + "(" + sqlColumnsToString() + ") values (?, ?, ?);";
         try {
-            PreparedStatement statement = connTo.prepareStatement(command);
+            PreparedStatement statement = conn_sql.prepareStatement(command);
             statement.setObject(1, passage.getHour());
             statement.setInt(2, passage.getOriginRoom());
             statement.setInt(3, passage.getDestinationRoom());

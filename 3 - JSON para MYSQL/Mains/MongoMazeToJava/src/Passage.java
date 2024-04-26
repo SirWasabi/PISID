@@ -35,9 +35,5 @@ public class Passage {
     public void setDestinationRoom(int destinationRoom) {
         this.destinationRoom = destinationRoom;
     }
-
-    @Override
-    public String toString() {
-        return hour.toString() + ", " + originRoom + ", " + destinationRoom; 
-    }
+    
 }

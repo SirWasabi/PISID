@@ -35,4 +35,5 @@ public class Temperature {
     public void setSensor(int sensor) {
         this.sensor = sensor;
     }
+    
 }
