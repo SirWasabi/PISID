@@ -110,8 +110,6 @@ public class MongoTempsToJava {
         }
     }
 
-    
-
     public void requestWithTimer() {
         Timer timer = new Timer();
         timer.schedule(new TimerTask() {
