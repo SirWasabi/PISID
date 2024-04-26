@@ -53,10 +53,10 @@ public class MongoMazeToJava {
         MongoMazeToJava conn = new MongoMazeToJava();
 
         conn.loadProperties();
-        // conn.connectMongo();
-        // conn.connectMySQL();
+        conn.connectMongo();
+        conn.connectMySQL();
         conn.connectMazeMySQL();
-        // conn.requestWithTimer();
+        conn.requestWithTimer();
     }
 
     public void loadProperties() {
