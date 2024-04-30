@@ -125,9 +125,11 @@ public class MongoTempsToJava {
 
                 processData(docs);
 
+                System.out.println("BEFORE DELETE: " + lastObjectId + " - " + mongocol.count() + "\n");
+
                 mongocol.deleteMany(new Document("_id", new Document("$lte", lastObjectId)));
 
-                System.out.println(lastObjectId + " - " + mongocol.count() + "\n");
+                System.out.println("AFTER DELETE: " + lastObjectId + " - " + mongocol.count() + "\n");
             }
         }, 0, frequency);
     }
@@ -197,7 +199,7 @@ public class MongoTempsToJava {
         return Math.abs(difference / duration);
     }
 
-    private String sqlColumnsToString() {
+    private String SQLColumnsToString() {
         StringBuilder result = new StringBuilder();
         for (int i = 0; i < sql_columns.length; i++) {
             result.append(sql_columns[i]);
@@ -209,7 +211,7 @@ public class MongoTempsToJava {
     }
 
     private void writePassageToSQL(Temperature temperature) {
-        String command = "Insert into " + sql_table_to + "(" + sqlColumnsToString() + ") values (?, ?, ?);";
+        String command = "Insert into " + sql_table_to + "(" + SQLColumnsToString() + ") values (?, ?, ?);";
         try {
             PreparedStatement statement = connTo.prepareStatement(command);
             statement.setObject(1, temperature.getHour());
