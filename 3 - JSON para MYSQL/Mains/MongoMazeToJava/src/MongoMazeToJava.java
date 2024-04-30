@@ -54,7 +54,6 @@ public class MongoMazeToJava {
 
         conn.loadProperties();
         conn.connectMongo();
-        conn.connectMySQL();
         conn.connectMazeMySQL();
         conn.getMazeConfig();
         conn.getMazeInfo();
@@ -113,8 +112,13 @@ public class MongoMazeToJava {
     public void connectMySQL() {
         try {
             Class.forName("org.mariadb.jdbc.Driver");
-            conn_sql = DriverManager.getConnection(sql_database_connection_to, sql_database_user_to,
-                    sql_database_password_to);
+            if (conn_sql == null || conn_sql.isClosed()) {
+                conn_sql = DriverManager.getConnection(sql_database_connection_to, sql_database_user_to,
+                        sql_database_password_to);
+                System.out.println(conn_sql);
+            } else {
+                System.out.println("SQL CONNECTED ALREADY");
+            }
         } catch (Exception e) {
             e.printStackTrace();
             System.out.println("Mysql Server Destination down, unable to make the connection. " + e);
@@ -183,30 +187,36 @@ public class MongoMazeToJava {
             public void run() {
                 FindIterable<Document> docs = null;
 
-                if (lastObjectId == null) {
-                    try {
-                        docs = mongocol.find();                    
-                    } catch (NullPointerException e) {
-                        System.out.println("No data yet on MongoDB");
+                connectMySQL();
+                if (conn_sql != null) {
+
+                    if (lastObjectId == null) {
+                        try {
+                            docs = mongocol.find();
+                        } catch (NullPointerException e) {
+                            System.out.println("No data yet on MongoDB");
+                        }
+                    } else {
+                        docs = mongocol.find(new Document("_id", new Document("$gt", lastObjectId)));
                     }
-                } else {
-                    docs = mongocol.find(new Document("_id", new Document("$gt", lastObjectId)));
-                }
 
-                if(docs != null) {
-                    processData(docs);
+                    if (docs != null) {
+                        processData(docs);
+                    }
 
-                    System.out.println("BEFORE DELETE: " + lastObjectId + " - " + mongocol.count() + "\n");
-
-                    mongocol.deleteMany(new Document("_id", new Document("$lte", lastObjectId)));
-
-                    System.out.println("AFTER DELETE: " + lastObjectId + " - " + mongocol.count() + "\n");
                 }
             }
         }, 0, frequency);
     }
 
+    public void deleteOldMongoDocs() {
+        System.out.println("BEFORE DELETE: " + lastObjectId + " - " + mongocol.count());
+        mongocol.deleteMany(new Document("_id", new Document("$lte", lastObjectId)));
+        System.out.println("AFTER DELETE: " + lastObjectId + " - " + mongocol.count() + "\n");
+    }
+
     public void processData(FindIterable<Document> docs) {
+        boolean wroteToSQL = false;
         for (Document doc : docs) {
             lastObjectId = (ObjectId) doc.get("_id");
             String hour_string = (String) doc.get("Hora");
@@ -227,15 +237,13 @@ public class MongoMazeToJava {
                     writeAlertToSQL(hour_string, destinationRoom_string, "CRITICO", "CRITICO - INATIVIDADE");
                 }
 
-                System.out
-                        .println(lastObjectId + " - " + hour_string + " - " + originRoom + " - " + destinationRoom
-                                + "\n");
-
-                writePassageToSQL(passage);
+                wroteToSQL = writePassageToSQL(passage);
             } else {
                 writeAlertToSQL(hour_string, destinationRoom_string, "Avaria", "Avaria - WRONG DATA");
             }
         }
+        
+        if(wroteToSQL) deleteOldMongoDocs();
     }
 
     private boolean containsFaultyData(String hour, String originRoom, String destinationRoom) {
@@ -271,7 +279,7 @@ public class MongoMazeToJava {
         return result.toString();
     }
 
-    private void writePassageToSQL(Passage passage) {
+    private boolean writePassageToSQL(Passage passage) {
         String command = "Insert into " + sql_table_to + " (" + SQLColumnsToString() + ") values (?, ?, ?);";
         try {
             PreparedStatement statement = conn_sql.prepareStatement(command);
@@ -281,9 +289,11 @@ public class MongoMazeToJava {
             System.out.println(statement.toString());
             int result = statement.executeUpdate();
             statement.close();
+            return true;
         } catch (Exception e) {
             System.out.println("Error Inserting in the database . " + e);
             System.out.println(command);
+            return false;
         }
     }
 
