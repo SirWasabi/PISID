@@ -116,6 +116,7 @@ public class MongoMazeToJava {
             conn_sql = DriverManager.getConnection(sql_database_connection_to, sql_database_user_to,
                     sql_database_password_to);
         } catch (Exception e) {
+            e.printStackTrace();
             System.out.println("Mysql Server Destination down, unable to make the connection. " + e);
         }
     }
@@ -195,9 +196,11 @@ public class MongoMazeToJava {
                 if(docs != null) {
                     processData(docs);
 
+                    System.out.println("BEFORE DELETE: " + lastObjectId + " - " + mongocol.count() + "\n");
+
                     mongocol.deleteMany(new Document("_id", new Document("$lte", lastObjectId)));
 
-                    System.out.println(lastObjectId.toString() + " - " + mongocol.count() + "\n");
+                    System.out.println("AFTER DELETE: " + lastObjectId + " - " + mongocol.count() + "\n");
                 }
             }
         }, 0, frequency);
@@ -257,7 +260,7 @@ public class MongoMazeToJava {
         return false;
     }
 
-    private String sqlColumnsToString() {
+    private String SQLColumnsToString() {
         StringBuilder result = new StringBuilder();
         for (int i = 0; i < sql_columns.length; i++) {
             result.append(sql_columns[i]);
@@ -269,7 +272,7 @@ public class MongoMazeToJava {
     }
 
     private void writePassageToSQL(Passage passage) {
-        String command = "Insert into " + sql_table_to + "(" + sqlColumnsToString() + ") values (?, ?, ?);";
+        String command = "Insert into " + sql_table_to + " (" + SQLColumnsToString() + ") values (?, ?, ?);";
         try {
             PreparedStatement statement = conn_sql.prepareStatement(command);
             statement.setObject(1, passage.getHour());
