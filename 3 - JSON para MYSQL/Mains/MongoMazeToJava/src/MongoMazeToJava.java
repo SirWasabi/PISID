@@ -1,3 +1,5 @@
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -48,6 +50,10 @@ public class MongoMazeToJava {
     static long frequency;
     final String[] sql_columns = { "Hora", "SalaOrigem", "SalaDestino" };
     final DateTimeFormatter date_formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
+    ArrayList<Corredor> corredores = new ArrayList<>();
+    ArrayList<Integer> rooms = new ArrayList<>();
+    String temperaturaDefault;
+    String numeroSalas;
 
     public static void main(String[] args) {
         MongoMazeToJava conn = new MongoMazeToJava();
@@ -143,12 +149,14 @@ public class MongoMazeToJava {
             ResultSet result = statement.executeQuery();
 
             while (result.next()) {
-                String temperaturaProgramada = result.getString("temperaturaprogramada");
-                String numeroSalas = result.getString("numerodesalas");
+                temperaturaDefault = result.getString("temperaturaprogramada");
+                numeroSalas = result.getString("numerodesalas");
 
                 System.out.println(
-                        "Temperatura Programada: " + temperaturaProgramada + ", Numero de Salas: " + numeroSalas);
+                        "Temperatura Programada: " + temperaturaDefault + ", Numero de Salas: " + numeroSalas);
             }
+
+            setRoomArray(numeroSalas); // pode ser null
 
             result.close();
             statement.close();
@@ -168,6 +176,8 @@ public class MongoMazeToJava {
                 String salaA = result.getString("salaa");
                 String salaB = result.getString("salab");
                 String centimetros = result.getString("centimetro");
+
+                corredores.add(new Corredor(Integer.parseInt(salaA), Integer.parseInt(salaB))); //TODO Check se dá faulty data
 
                 System.out.println("Sala A: " + salaA + ", Sala B: " + salaB + ", Centimetro: " + centimetros);
             }
@@ -255,8 +265,23 @@ public class MongoMazeToJava {
             return true;
         }
 
+        return checkCorredores(corredores, Integer.parseInt(originRoom), Integer.parseInt(destinationRoom));
+    }
+
+    private boolean checkCorredores(ArrayList<Corredor> corredores, int so, int sd) {
+        for(Corredor c : corredores)
+            if(c.corredorIgual(so, sd))
+             return true;
         return false;
     }
+
+    private void setRoomArray(String numeroSalas) {
+        int numero = Integer.parseInt(numeroSalas);
+        for(int i=0; i < numero; i++) {
+            rooms.add(0);
+        }
+    }
+
 
     private boolean checkInactivity(Passage passage) {
         System.out.println("Check Inactive");
@@ -264,6 +289,7 @@ public class MongoMazeToJava {
     }
 
     private boolean checkRoomMax(Passage passage) {
+        
         System.out.println("Check Max Num");
         return false;
     }
