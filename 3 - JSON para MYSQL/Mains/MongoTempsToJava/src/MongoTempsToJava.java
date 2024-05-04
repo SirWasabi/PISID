@@ -5,6 +5,7 @@ import java.io.*;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -30,12 +31,13 @@ public class MongoTempsToJava {
     static String mongo_database = new String();
     static String mongo_collection = new String();
     static String mongo_authentication = new String();
+    private static final int LARGE_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-    static Connection connTo;
+    static Connection conn_sql;
     static String sql_database_connection_to = new String();
-	static String sql_database_password_to= new String();
-	static String sql_database_user_to= new String();
-	static String  sql_table_to= new String();
+    static String sql_database_password_to = new String();
+    static String sql_database_user_to = new String();
+    static String sql_table_to = new String();
 
     public ObjectId lastObjectId = null;
     private static long frequency;
@@ -51,8 +53,6 @@ public class MongoTempsToJava {
         MongoTempsToJava conn = new MongoTempsToJava();
 
         conn.loadProperties();
-        conn.connectMongo();
-        conn.connectMySQL();
         conn.requestWithTimer();
     }
 
@@ -69,10 +69,10 @@ public class MongoTempsToJava {
             mongo_authentication = p.getProperty("mongo_authentication");
             mongo_collection = p.getProperty("mongo_collection");
 
-            sql_table_to= p.getProperty("sql_table_to");
-			sql_database_connection_to = p.getProperty("sql_database_connection_to");
-			sql_database_password_to = p.getProperty("sql_database_password_to");
-			sql_database_user_to= p.getProperty("sql_database_user_to");
+            sql_table_to = p.getProperty("sql_table_to");
+            sql_database_connection_to = p.getProperty("sql_database_connection_to");
+            sql_database_password_to = p.getProperty("sql_database_password_to");
+            sql_database_user_to = p.getProperty("sql_database_user_to");
 
             frequency = Long.parseLong(p.getProperty("frequency"));
             outlier_gap = Double.parseDouble(p.getProperty("outlier_gap"));
@@ -81,7 +81,7 @@ public class MongoTempsToJava {
         }
     }
 
-    public void connectMongo() {
+    public boolean connectMongo() {
         String mongoURI = new String();
         mongoURI = "mongodb://";
         if (mongo_authentication.equals("true"))
@@ -95,19 +95,38 @@ public class MongoTempsToJava {
         else if (mongo_authentication.equals("true"))
             mongoURI = mongoURI + "/?authSource=admin";
 
-        MongoClient mongoClient = new MongoClient(new MongoClientURI(mongoURI));
-        db = mongoClient.getDatabase(mongo_database);
-        mongocol = db.getCollection(mongo_collection);
+        mongoURI = mongoURI + "&serverSelectionTimeoutMS=" + LARGE_TIMEOUT_MS;
+
+        try {
+            if (mongoClient == null) {
+                mongoClient = new MongoClient(new MongoClientURI(mongoURI));
+            } else {
+                mongoClient.listDatabaseNames().first();
+            }
+            db = mongoClient.getDatabase(mongo_database);
+            mongocol = db.getCollection(mongo_collection);
+            System.out.println("MONGO CONNECTED");
+            return true;
+        } catch (Exception e) {
+            System.out.println("MONGO NOT CONNECTED");
+            return false;
+        }
     }
 
-    public void connectMySQL() {
+    public boolean connectMySQL() {
         try {
-            Class.forName("org.mariadb.jdbc.Driver");
-            connTo = DriverManager.getConnection(sql_database_connection_to, sql_database_user_to,
-                    sql_database_password_to);
-        } catch (Exception e) {
-            System.out.println("Mysql Server Destination down, unable to make the connection. " + e);
+            if (conn_sql == null || conn_sql.isClosed()) {
+                Class.forName("org.mariadb.jdbc.Driver");
+                conn_sql = DriverManager.getConnection(sql_database_connection_to, sql_database_user_to,
+                        sql_database_password_to);
+                return true;
+            }
+        } catch (SQLException | ClassNotFoundException e) {
+            System.out.println("MYSQL SERVER IS NOT CONNECTED");
+            return false;
         }
+
+        return false;
     }
 
     public void requestWithTimer() {
@@ -115,28 +134,34 @@ public class MongoTempsToJava {
         timer.schedule(new TimerTask() {
             @Override
             public void run() {
-                FindIterable<Document> docs;
+                FindIterable<Document> docs = null;
 
-                if (lastObjectId == null) {
-                    docs = mongocol.find();
-                } else {
-                    docs = mongocol.find(new Document("_id", new Document("$gt", lastObjectId)));
+                if (connectMongo() && connectMySQL()) {
+                    if (lastObjectId == null) {
+                        try {
+                            docs = mongocol.find();
+                        } catch (NullPointerException e) {
+                            System.out.println("No data yet on MongoDB");
+                        }
+                    } else {
+                        docs = mongocol.find(new Document("_id", new Document("$gt", lastObjectId)));
+                    }
+
+                    if (docs != null) {
+                        processData(docs);
+                    }
                 }
-
-                processData(docs);
-
-                System.out.println("BEFORE DELETE: " + lastObjectId + " - " + mongocol.count() + "\n");
-
-                mongocol.deleteMany(new Document("_id", new Document("$lte", lastObjectId)));
-
-                System.out.println("AFTER DELETE: " + lastObjectId + " - " + mongocol.count() + "\n");
             }
         }, 0, frequency);
     }
 
+    public void deleteOldMongoDocs() {
+        mongocol.deleteMany(new Document("_id", new Document("$lte", lastObjectId)));
+    }
+
     public void processData(FindIterable<Document> docs) {
+        boolean wroteTempToSQL = false;
         for (Document doc : docs) {
-            lastObjectId = (ObjectId) doc.get("_id");
             String hour_string = (String) doc.get("Hora");
             String reading_string = String.valueOf(doc.get("Leitura"));
             String sensor_string = String.valueOf(doc.get("Sensor"));
@@ -151,19 +176,18 @@ public class MongoTempsToJava {
                     writeAlertToSQL(hour_string, sensor_string, reading_string, "Avaria", "Avaria - OUTLIERS");
                 }
 
-                System.out
-                        .println(lastObjectId + " - " + hour_string + " - " + reading_string + " - " + sensor_string
-                                + "\n");
+                wroteTempToSQL = writeTemperatureToSQL(temperature);
 
-                writePassageToSQL(temperature);
             } else {
                 writeAlertToSQL(hour_string, sensor_string, reading_string, "Avaria", "Avaria - WRONG DATA");
             }
 
-            System.out.println(
-                    lastObjectId + " - " + hour_string + " - " + reading_string + " - " + sensor_string + "\n");
+            if (wroteTempToSQL)
+                lastObjectId = (ObjectId) doc.get("_id");
         }
 
+        if (wroteTempToSQL)
+            deleteOldMongoDocs();
     }
 
     private boolean containsFaultyData(String hour, String reading, String sensor) {
@@ -210,19 +234,26 @@ public class MongoTempsToJava {
         return result.toString();
     }
 
-    private void writePassageToSQL(Temperature temperature) {
+    private boolean writeTemperatureToSQL(Temperature temperature) {
         String command = "Insert into " + sql_table_to + "(" + SQLColumnsToString() + ") values (?, ?, ?);";
         try {
-            PreparedStatement statement = connTo.prepareStatement(command);
+            PreparedStatement statement = conn_sql.prepareStatement(command);
             statement.setObject(1, temperature.getHour());
             statement.setDouble(2, temperature.getReading());
             statement.setInt(3, temperature.getSensor());
             System.out.println(statement.toString());
-            int result = statement.executeUpdate();
-            statement.close();
+            if (!conn_sql.isClosed()) {
+                int result = statement.executeUpdate();
+                statement.close();
+                return true;
+            } else {
+                System.out.println("ITEM NOT INSERTED BECAUSE MYSQL CONNECTION IS CLOSED");
+                return false;
+            }
         } catch (Exception e) {
-            System.out.println("Error Inserting in the database . " + e);
+            System.out.println("ERROR INSERTING IN DATABASE - " + e);
             System.out.println(command);
+            return false;
         }
     }
 

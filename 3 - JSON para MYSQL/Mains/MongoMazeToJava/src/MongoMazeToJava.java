@@ -15,7 +15,6 @@ import org.bson.Document;
 import org.bson.types.ObjectId;
 
 import com.mongodb.*;
-import com.mongodb.MongoClientOptions.Builder;
 import com.mongodb.client.FindIterable;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
@@ -97,7 +96,7 @@ public class MongoMazeToJava {
         }
     }
 
-    public void connectMongo() {
+    public boolean connectMongo() {
         String mongoURI = new String();
         mongoURI = "mongodb://";
         if (mongo_authentication.equals("true"))
@@ -111,37 +110,37 @@ public class MongoMazeToJava {
         else if (mongo_authentication.equals("true"))
             mongoURI = mongoURI + "/?authSource=admin";
 
-        if (!isMongoConnectionOpen()) {
-            mongoClient = new MongoClient(new MongoClientURI(mongoURI));
+        mongoURI = mongoURI + "&serverSelectionTimeoutMS=" + LARGE_TIMEOUT_MS;
+
+        try {
+            if (mongoClient == null) {
+                mongoClient = new MongoClient(new MongoClientURI(mongoURI));
+            } else {
+                mongoClient.listDatabaseNames().first();
+            }
             db = mongoClient.getDatabase(mongo_database);
             mongocol = db.getCollection(mongo_collection);
-        } else {
-            System.out.println("MONGO ALREADY CONNECTED");
+            System.out.println("MONGO CONNECTED");
+            return true;
+        } catch (Exception e) {
+            System.out.println("MONGO NOT CONNECTED");
+            return false;
         }
-    }
-
-    public boolean isMongoConnectionOpen() {
-            try {
-                mongoClient.listDatabaseNames();
-                return true;
-            } catch (Exception e) {
-                System.out.println("MONGO IS DOWN");
-                return false;
-            }
     }
 
     public boolean connectMySQL() {
         try {
-            Class.forName("org.mariadb.jdbc.Driver");
             if (conn_sql == null || conn_sql.isClosed()) {
+                Class.forName("org.mariadb.jdbc.Driver");
                 conn_sql = DriverManager.getConnection(sql_database_connection_to, sql_database_user_to,
                         sql_database_password_to);
                 return true;
             }
-        } catch (Exception e) {
-            System.out.println("MYSQL SERVER NOT CONNECTED");
+        } catch (SQLException | ClassNotFoundException e) {
+            System.out.println("MYSQL SERVER IS NOT CONNECTED");
             return false;
         }
+
         return false;
     }
 
@@ -208,29 +207,20 @@ public class MongoMazeToJava {
             public void run() {
                 FindIterable<Document> docs = null;
 
-                connectMongo();
-                connectMySQL();
-
-                try {
-                    if (conn_sql != null && !conn_sql.isClosed()) {
-                        if (isMongoConnectionOpen()) {
-                            if (lastObjectId == null) {
-                                try {
-                                    docs = mongocol.find();
-                                } catch (NullPointerException e) {
-                                    System.out.println("No data yet on MongoDB");
-                                }
-                            } else {
-                                docs = mongocol.find(new Document("_id", new Document("$gt", lastObjectId)));
-                            }
-
-                            if (docs != null) {
-                                processData(docs);
-                            }
+                if (connectMongo() && connectMySQL()) {
+                    if (lastObjectId == null) {
+                        try {
+                            docs = mongocol.find();
+                        } catch (NullPointerException e) {
+                            System.out.println("No data yet on MongoDB");
                         }
+                    } else {
+                        docs = mongocol.find(new Document("_id", new Document("$gt", lastObjectId)));
                     }
-                } catch (SQLException e) {
-                    e.printStackTrace();
+
+                    if (docs != null) {
+                        processData(docs);
+                    }
                 }
             }
         }, 0, frequency);

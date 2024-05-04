@@ -8,8 +8,8 @@ from getpass import getpass
 def on_connectMqttTemp(client, userdata, flags, rc):
     print("MQTT Temperature Connected with result code "+str(rc))
 
-topic="pisid_grupo4_temp"
-clientMqttMovements = mqtt.Client()
+topic="pisid_mazetemp"
+clientMqttMovements = mqtt.Client(client_id="pisid_mazetemp", callback_api_version=mqtt.CallbackAPIVersion.VERSION1)
 clientMqttMovements.on_connect = on_connectMqttTemp
 clientMqttMovements.connect('broker.mqtt-dashboard.com', 1883)
 i=0
