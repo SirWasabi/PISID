@@ -20,7 +20,7 @@ public class Room {
     }
 
     public boolean isRoomFull(int max) {
-        if (population >= max) {
+        if (population > max) {
             return true;
         }
         return false;

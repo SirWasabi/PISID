@@ -1,4 +1,3 @@
-import java.util.ArrayList;
 import java.util.Properties;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -8,6 +7,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
@@ -48,25 +48,18 @@ public class MongoMazeToJava {
     static String sql_maze_table_config = new String();
     static String sql_maze_table_layout = new String();
 
-    static ObjectId lastObjectId = null;
-    static long frequency;
-    final String[] sql_columns = { "Hora", "SalaOrigem", "SalaDestino" };
-    final String[] sql_columns_alert = { "Sala", "SalaOrigem", "SalaDestino", "TipoAlerta", "Mensagem", "HoraEscrita" };
+    Experiment experiment;
+    ObjectId lastObjectId = null;
+    LocalDateTime lastPassageDate = null;
+    long frequency;
+    final String[] SQL_COLUMNS_PASSAGE = { "Hora", "SalaOrigem", "SalaDestino" };
+    final String[] SQL_COLUMNS_ALERT = { "Sala", "SalaOrigem", "SalaDestino", "TipoAlerta", "Mensagem", "HoraEscrita" };
     final DateTimeFormatter date_formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
-    ArrayList<Crossing> crossings = new ArrayList<>();
-    ArrayList<Room> rooms = new ArrayList<>();
-    int room_max;
-    int number_of_rats;
-    String temperatureDefault;
-    String number_of_rooms;
 
     public static void main(String[] args) {
         MongoMazeToJava conn = new MongoMazeToJava();
 
         conn.loadProperties();
-        conn.connectMazeMySQL();
-        conn.getMazeConfig();
-        conn.getMazeInfo();
         conn.requestWithTimer();
     }
 
@@ -149,71 +142,31 @@ public class MongoMazeToJava {
         return true;
     }
 
-    public void connectMazeMySQL() {
-        System.out.println("Getting maze \n");
-        try {
-            Class.forName("org.mariadb.jdbc.Driver");
-            conn_maze = DriverManager.getConnection(sql_maze_database_connection_to, sql_maze_database_user_to,
-                    sql_maze_database_password_to);
-        } catch (Exception e) {
-            System.out.println("Mysql Server Destination down, unable to make the connection. " + e);
-        }
-    }
-
-    private void getMazeConfig() {
-        String command = "Select * FROM " + sql_maze_table_config;
-        try {
-            PreparedStatement statement = conn_maze.prepareStatement(command);
-            ResultSet result = statement.executeQuery();
-
-            while (result.next()) {
-                temperatureDefault = result.getString("temperaturaprogramada");
-                number_of_rooms = result.getString("numerodesalas");
-
-                System.out.println(
-                        "Temperatura Programada: " + temperatureDefault + ", Numero de Salas: " + number_of_rooms);
-            }
-
-            result.close();
-            statement.close();
-        } catch (Exception e) {
-            System.out.println("Error Selecting from the database . " + e);
-            System.out.println(command);
-        }
-    }
-
-    private void getMazeInfo() {
-        String command = "Select * FROM " + sql_maze_table_layout;
-        try {
-            PreparedStatement statement = conn_maze.prepareStatement(command);
-            ResultSet result = statement.executeQuery();
-
-            while (result.next()) {
-                String roomA = result.getString("salaa");
-                String roomB = result.getString("salab");
-
-                addCrossingToArray(roomA, roomB); // TODO Check se dá faulty data
-            }
-
-            result.close();
-            statement.close();
-        } catch (Exception e) {
-            System.out.println("Error Selecting from the database . " + e);
-            System.out.println(command);
-        }
-    }
-
-    private boolean isTestingActive() {
+    private Experiment createExperimentIfActive() {
         String command = "SELECT * FROM experiencia WHERE Estado='Ativo';";
         try {
             PreparedStatement statement = conn_sql.prepareStatement(command);
             ResultSet result = statement.executeQuery();
 
             while (result.next()) {
-                room_max = result.getInt("LimiteRatos");
-                number_of_rats = result.getInt("NumeroRatos");
-                System.out.println("EXPERIENCIA ATIVA - NUMERO MAX:" + room_max);
-                return true;
+                int id = result.getInt("IDExperiencia");
+                int room_max = result.getInt("LimiteRatos");
+                int number_of_rats = result.getInt("NumeroRatos");
+                int maxWaitTime = result.getInt("SegundoSemMovimento");
+
+                if (experiment == null) {
+                    System.out.println(
+                            "EXPERIENCIA ATIVA: " + id + " - NUMERO MAX: " + room_max + " - NUMERO DE RATOS: "
+                                    + number_of_rats);
+                    return setupExperiment(id, room_max, number_of_rats, maxWaitTime);
+                } else {
+                    if (experiment.getID() == id) {
+                        System.out.println("THIS EXPERIMENT ALREADY EXISTS. ID: " + experiment.getID());
+                        return experiment;
+                    } else {
+                        setupExperiment(id, room_max, number_of_rats, maxWaitTime);
+                    }
+                }
             }
 
             result.close();
@@ -223,7 +176,17 @@ public class MongoMazeToJava {
             System.out.println(command);
         }
 
-        return false;
+        return null;
+    }
+
+    public Experiment setupExperiment(int id, int room_max, int number_of_rats, int maxWaitTime) {
+        Maze maze = new Maze(sql_maze_database_connection_to, sql_maze_database_user_to,
+                sql_maze_database_password_to, sql_maze_table_config, sql_maze_table_layout, room_max,
+                number_of_rats);
+        experiment = new Experiment(id, maze, maxWaitTime);
+        System.out.println("EXPERIENCIA ATIVA: " + experiment.getID() + " - NUMERO MAX SALA: "
+                + maze.getRoom_max() + " - NUMERO DE RATOS: " + maze.getNumber_of_rats());
+        return experiment;
     }
 
     public void requestWithTimer() {
@@ -245,6 +208,7 @@ public class MongoMazeToJava {
                     }
 
                     if (docs != null) {
+                        createExperimentIfActive();
                         processData(docs);
                     }
                 } else {
@@ -255,106 +219,137 @@ public class MongoMazeToJava {
     }
 
     public void deleteOldMongoDocs() {
+        System.out.println("ERASED " + mongocol.count() + " DOCS");
         mongocol.deleteMany(new Document("_id", new Document("$lte", lastObjectId)));
     }
 
     public void processData(FindIterable<Document> docs) {
-        boolean wrotePassageToSQL = false;
         for (Document doc : docs) {
             String hour_string = (String) doc.get("Hora");
             String originRoom_string = String.valueOf((Integer) doc.get("SalaOrigem"));
             String destinationRoom_string = String.valueOf((Integer) doc.get("SalaDestino"));
 
-            // if (isTestingActive()) {
-            //     if(rooms.isEmpty()) {
-            //         createRooms(Integer.parseInt(number_of_rooms));
-            //     }
-                if (!containsFaultyData(hour_string, originRoom_string, destinationRoom_string)) {
+            if (experiment != null) {
+                Alert wrong_data = containsFaultyData(hour_string, originRoom_string, destinationRoom_string);
+                if (wrong_data == null) {
                     LocalDateTime hour = LocalDateTime.parse(hour_string, date_formatter);
                     int originRoom = Integer.valueOf(originRoom_string);
                     int destinationRoom = Integer.valueOf(destinationRoom_string);
 
+                    Maze maze = experiment.getMaze();
                     Passage passage = new Passage(hour, originRoom, destinationRoom);
 
-                    if (checkRoomMax(passage)) {
-                        // writeAlertToSQL(hour_string, destinationRoom_string, "CRITICO", "ROOM MAX");
+                    Room origin = maze.getRoom(originRoom);
+                    Room destination = maze.getRoom(destinationRoom);
+                    if (maze.getRoom(originRoom).getPopulation() != 0) {
+                        origin.setPopulation(origin.getPopulation() - 1);
+                        destination.setPopulation(destination.getPopulation() + 1);
+                    }
+                    
+                    // TODO GAP RATOS
+
+                    for (Room r : maze.getRooms()) {
+                        if (r.getRoomID() == originRoom)
+                            System.out.println(r.getRoomID() + " - " + r.getPopulation() + " <-- FROM");
+                        else if (r.getRoomID() == destinationRoom)
+                            System.out.println(r.getRoomID() + " - " + r.getPopulation() + " <-- TO");
+                        else
+                            System.out.println(r.getRoomID() + " - " + r.getPopulation());
                     }
 
-                    if (checkInactivity(passage)) {
-                        // writeAlertToSQL(hour_string, destinationRoom_string, "CRITICO", "CRITICO -
-                        // INATIVIDADE");
+                    boolean ending_experiment = false;
+                    if (maze.checkRoomMax(destinationRoom)) {
+                        Alert alert = new Alert(destinationRoom_string, originRoom_string, destinationRoom_string, null,
+                                null, "CRITICO",
+                                "SALA " + destinationRoom_string + " CHEIA", hour_string);
+                        if (writeAlertToSQL(alert)) {
+                            lastObjectId = (ObjectId) doc.get("_id");
+                            ending_experiment = true;
+                        }
                     }
 
-                    //updateRooms();
+                    if (lastPassageDate != null) {
+                        Duration duration = Duration.between(lastPassageDate, hour);
+                        if (duration.toSeconds() >= experiment.getMaxWaitTime()) {
+                            Alert alert = new Alert(destinationRoom_string, originRoom_string, destinationRoom_string,
+                                    null,
+                                    null, "CONCLUSAO",
+                                    "CONCLUSAO - INATIVIDADE", hour_string);
+                            writeAlertToSQL(alert);
+                            endExperiment();
+                        }
+                    }
 
-                    wrotePassageToSQL = writePassageToSQL(passage);
+                    if (writePassageToSQL(passage) && !ending_experiment) {
+                        lastObjectId = (ObjectId) doc.get("_id");
+                        lastPassageDate = hour;
+                    }
 
                 } else {
                     Alert alert = new Alert(null, originRoom_string, destinationRoom_string, null, null, "AVARIA",
                             "Avaria - WRONG DATA", hour_string);
-                    writeAlertToSQL(alert);
+                    if (writeAlertToSQL(alert))
+                        lastObjectId = (ObjectId) doc.get("_id");
                 }
-            //}
-            if (wrotePassageToSQL)
-                lastObjectId = (ObjectId) doc.get("_id");
+            }
         }
 
-        if (wrotePassageToSQL)
-            deleteOldMongoDocs();
+        deleteOldMongoDocs();
     }
 
-    private void updateRooms() {
-        System.out.println("Updating Rooms");
+    private void endExperiment() {
+        String command = "UPDATE experiencia SET Estado = 'Concluido' WHERE IdExperiencia = " + experiment.getID() + ";";
+        try {
+            PreparedStatement statement = conn_sql.prepareStatement(command);
+            ResultSet result = statement.executeQuery();
+            result.close();
+            statement.close();
+        } catch (Exception e) {
+            System.out.println("Error UPDATING the database . " + e);
+            System.out.println(command);
+        }
     }
 
-    private boolean containsFaultyData(String hour, String originRoom, String destinationRoom) {
+    private Alert containsFaultyData(String hour, String originRoom, String destinationRoom) {
         try {
             LocalDateTime.parse(hour, date_formatter);
             Integer.parseInt(originRoom);
             Integer.parseInt(destinationRoom);
         } catch (Exception e) {
-            return true;
+            return new Alert(null, originRoom, destinationRoom, null, null, "AVARIA",
+                    "AVARIA - WRONG DATA FORMAT - SALA ORIGEM: " + originRoom + " - SALA DESTINO: " + destinationRoom
+                            + " - HORA: " + hour,
+                    hour);
         }
 
-        // if (checkCrossings(crossings, Integer.parseInt(originRoom),
-        // Integer.parseInt(destinationRoom))) {
-        // return true;
-        // }
-
-        return false;
-    }
-
-    private boolean checkCrossings(ArrayList<Crossing> crossings, int originRoom, int destinationRoom) {
-        for (Crossing crossing : crossings) {
-            if (crossing.isSameCrossing(originRoom, destinationRoom))
-                return true;
+        Maze maze = experiment.getMaze();
+        if (!maze.existsCrossing(Integer.parseInt(originRoom), Integer.parseInt(destinationRoom))) {
+            return new Alert(null, originRoom, destinationRoom, null, null, "AVARIA",
+                    "AVARIA - NON EXISTENT CROSSING: Corredor(" + originRoom + ", " + destinationRoom + ")", hour);
         }
 
-        return false;
-    }
-
-    private void createRooms(int numberOfRooms) {
-        for (int i = 0; i < numberOfRooms; i++) {
-            rooms.add(new Room(i + 1));
+        if (maze.getRoom(Integer.parseInt(originRoom)) == null
+                && maze.getRoom(Integer.parseInt(destinationRoom)) == null) {
+            return new Alert(null, originRoom, destinationRoom, null, null, "AVARIA",
+                    "AVARIA - NON EXISTENT ROOMS: " + originRoom + " - " + destinationRoom, hour);
         }
 
-        for (Room r : rooms) {
-            System.out.println(r.getRoomID() + " - " + r.getPopulation());
+        if (maze.getRoom(Integer.parseInt(originRoom)) == null) {
+            return new Alert(null, originRoom, destinationRoom, null, null, "AVARIA",
+                    "AVARIA - NON EXISTENT ORIGIN ROOM: " + originRoom, hour);
         }
-    }
 
-    private void addCrossingToArray(String roomA, String roomB) {
-        crossings.add(new Crossing(Integer.parseInt(roomA), Integer.parseInt(roomB)));
-    }
+        if (maze.getRoom(Integer.parseInt(destinationRoom)) == null) {
+            return new Alert(null, originRoom, destinationRoom, null, null, "AVARIA",
+                    "AVARIA - NON EXISTENT DESTINATION ROOM: " + destinationRoom, hour);
+        }
 
-    private boolean checkInactivity(Passage passage) {
-        // System.out.println("Check Inactive");
-        return false;
-    }
+        if (maze.getRoom(Integer.parseInt(originRoom)).getPopulation() == 0) {
+            return new Alert(null, originRoom, destinationRoom, null, null, "AVARIA",
+                    "AVARIA - NO RATS IN ORIGIN ROOM: " + originRoom, hour);
+        }
 
-    private boolean checkRoomMax(Passage passage) {
-        // System.out.println("Check Max Num");
-        return false;
+        return null;
     }
 
     private String SQLColumnsToString(String[] columns) {
@@ -369,7 +364,8 @@ public class MongoMazeToJava {
     }
 
     private boolean writePassageToSQL(Passage passage) {
-        String command = "Insert into " + sql_table_to + " (" + SQLColumnsToString(sql_columns) + ") values (?, ?, ?);";
+        String command = "Insert into " + sql_table_to + " (" + SQLColumnsToString(SQL_COLUMNS_PASSAGE)
+                + ") values (?, ?, ?);";
         try {
             PreparedStatement statement = conn_sql.prepareStatement(command);
             statement.setObject(1, passage.getHour());
@@ -377,7 +373,7 @@ public class MongoMazeToJava {
             statement.setInt(3, passage.getDestinationRoom());
             System.out.println(statement.toString());
             if (!conn_sql.isClosed()) {
-                int result = statement.executeUpdate();
+                statement.executeUpdate();
                 statement.close();
                 return true;
             } else {
@@ -392,7 +388,7 @@ public class MongoMazeToJava {
     }
 
     private boolean writeAlertToSQL(Alert alert) {
-        String command = "Insert into " + sql_table_alert + " (" + SQLColumnsToString(sql_columns_alert)
+        String command = "Insert into " + sql_table_alert + " (" + SQLColumnsToString(SQL_COLUMNS_ALERT)
                 + ") values (?, ?, ?, ?, ?, ?);";
         try {
             PreparedStatement statement = conn_sql.prepareStatement(command);
@@ -404,7 +400,7 @@ public class MongoMazeToJava {
             statement.setString(6, alert.getHour());
             System.out.println(statement.toString());
             if (!conn_sql.isClosed()) {
-                int result = statement.executeUpdate();
+                statement.executeUpdate();
                 statement.close();
                 return true;
             } else {
