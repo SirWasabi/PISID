@@ -65,7 +65,7 @@ public class Maze {
     }
 
     public void connectMazeMySQL() {
-        System.out.println("Getting maze \n");
+        System.out.println("GETTING MAZE INFO");
         try {
             Class.forName("org.mariadb.jdbc.Driver");
             conn_maze = DriverManager.getConnection(sql_maze_database_connection_to, sql_maze_database_user_to,
@@ -84,9 +84,8 @@ public class Maze {
             while (result.next()) {
                 temperatureDefault = Double.parseDouble(result.getString("temperaturaprogramada"));
                 number_of_rooms = Integer.parseInt(result.getString("numerodesalas"));
-
                 System.out.println(
-                        "Temperatura Programada: " + temperatureDefault + ", Numero de Salas: " + number_of_rooms);
+                        "PROGRAMMED TEMPERATURE: " + temperatureDefault + " - NUMBER OF ROOMS: " + number_of_rooms);
             }
 
             result.close();

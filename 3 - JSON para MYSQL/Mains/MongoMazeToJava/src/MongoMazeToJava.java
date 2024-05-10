@@ -2,7 +2,6 @@ import java.util.Properties;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.io.*;
-import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -158,16 +157,13 @@ public class MongoMazeToJava {
 
                 Maze maze = createMaze(id, room_max, number_of_rats);
                 if (experiment == null) {
-                    System.out.println(
-                            "EXPERIENCIA ATIVA: " + id + " - NUMERO MAX: " + room_max + " - NUMERO DE RATOS: "
-                                    + number_of_rats);
                     return setupExperiment(id, maze, room_max, number_of_rats, maxWaitTime);
                 } else {
                     if (experiment.getID() == id) {
                         System.out.println("THIS EXPERIMENT ALREADY EXISTS. ID: " + experiment.getID());
                         return experiment;
                     } else {
-                        setupExperiment(id, maze, room_max, number_of_rats, maxWaitTime);
+                        return setupExperiment(id, maze, room_max, number_of_rats, maxWaitTime);
                     }
                 }
             }
@@ -247,8 +243,8 @@ public class MongoMazeToJava {
 
     public Experiment setupExperiment(int id, Maze maze, int room_max, int number_of_rats, int maxWaitTime) {
         experiment = new Experiment(id, maze, maxWaitTime, getAdicionalParameters(id));
-        System.out.println("EXPERIENCIA ATIVA: " + experiment.getID() + " - NUMERO MAX SALA: "
-                + maze.getRoom_max() + " - NUMERO DE RATOS: " + maze.getNumber_of_rats());
+        System.out.println("EXPERIENCIA ATIVA: " + experiment.getID() + " - NUMERO MAX POR SALA: "
+                + maze.getRoom_max() + " - NUMERO DE RATOS: " + maze.getNumber_of_rats() + " - TEMPO MAXIMO DE ESPERA: " + experiment.getMaxWaitTime());
         return experiment;
     }
 

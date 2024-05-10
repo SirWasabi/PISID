@@ -1,3 +1,4 @@
+import java.util.Locale;
 import java.util.Properties;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -5,10 +6,14 @@ import java.io.*;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
 
 import org.bson.Document;
 import org.bson.types.ObjectId;
@@ -17,6 +22,7 @@ import com.mongodb.*;
 import com.mongodb.client.FindIterable;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.result.DeleteResult;
 
 public class MongoTempsToJava {
 
@@ -38,21 +44,35 @@ public class MongoTempsToJava {
     static String sql_database_password_to = new String();
     static String sql_database_user_to = new String();
     static String sql_table_to = new String();
+    static String sql_table_alert = new String();
+
+    static Connection conn_maze;
+    static String sql_maze_database_connection_to = new String();
+    static String sql_maze_database_password_to = new String();
+    static String sql_maze_database_user_to = new String();
+    static String sql_maze_table_config = new String();
 
     public ObjectId lastObjectId = null;
-    private static long frequency;
-    private Temperature last_temp;
-    private Double outlier_gap;
-    final String[] sql_columns = { "Hora", "Leitura", "Sensor" };
-    final DateTimeFormatter date_formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
-
-    private int counter_faulty_data = 0;
-    private int counter_outliers = 0;
+    static long frequency;
+    Double default_temperature_gap;
+    Double default_max_temperature_variation;
+    double default_ideal_temperature;
+    final String[] SQL_COLUMNS_TEMPERATURE = { "Hora", "Leitura", "Sensor" };
+    final String[] SQL_COLUMNS_ALERT = { "Sensor", "Leitura", "TipoAlerta", "Mensagem", "HoraEscrita" };
+    final DateTimeFormatter date_formatter = new DateTimeFormatterBuilder()
+            .appendPattern("yyyy-MM-dd HH:mm:ss")
+            .optionalStart()
+            .appendPattern(".SSSSSS")
+            .optionalEnd()
+            .toFormatter();
+    Experiment experiment;
 
     public static void main(String[] args) {
         MongoTempsToJava conn = new MongoTempsToJava();
 
         conn.loadProperties();
+        conn.connectMazeMySQL();
+        conn.getMazeConfig();
         conn.requestWithTimer();
     }
 
@@ -70,12 +90,19 @@ public class MongoTempsToJava {
             mongo_collection = p.getProperty("mongo_collection");
 
             sql_table_to = p.getProperty("sql_table_to");
+            sql_table_alert = p.getProperty("sql_table_alert");
             sql_database_connection_to = p.getProperty("sql_database_connection_to");
             sql_database_password_to = p.getProperty("sql_database_password_to");
             sql_database_user_to = p.getProperty("sql_database_user_to");
 
+            sql_maze_table_config = p.getProperty("sql_maze_table_config");
+            sql_maze_database_connection_to = p.getProperty("sql_maze_database_connection_to");
+            sql_maze_database_password_to = p.getProperty("sql_maze_database_password_to");
+            sql_maze_database_user_to = p.getProperty("sql_maze_database_user_to");
+
             frequency = Long.parseLong(p.getProperty("frequency"));
-            outlier_gap = Double.parseDouble(p.getProperty("outlier_gap"));
+            default_temperature_gap = Double.parseDouble(p.getProperty("default_temperature_gap"));
+            default_max_temperature_variation = Double.parseDouble(p.getProperty("default_max_temperature_variation"));
         } catch (Exception e) {
             System.out.println("Error reading MongoTempsToJava.ini file " + e);
         }
@@ -126,7 +153,136 @@ public class MongoTempsToJava {
             return false;
         }
 
-        return false;
+        return true;
+    }
+
+    public void connectMazeMySQL() {
+        System.out.println("GETTING MAZE INFO");
+        try {
+            Class.forName("org.mariadb.jdbc.Driver");
+            conn_maze = DriverManager.getConnection(sql_maze_database_connection_to, sql_maze_database_user_to,
+                    sql_maze_database_password_to);
+        } catch (Exception e) {
+            System.out.println("Mysql Server Destination down, unable to make the connection. " + e);
+        }
+    }
+
+    public void getMazeConfig() {
+        String command = "Select * FROM " + sql_maze_table_config;
+        try {
+            PreparedStatement statement = conn_maze.prepareStatement(command);
+            ResultSet result = statement.executeQuery();
+
+            while (result.next()) {
+                default_ideal_temperature = Double.parseDouble(result.getString("temperaturaprogramada"));
+                System.out.println(default_ideal_temperature);
+            }
+
+            result.close();
+            statement.close();
+        } catch (Exception e) {
+            System.out.println("Error Selecting from the database . " + e);
+            System.out.println(command);
+        }
+    }
+
+    private Experiment createExperimentIfActive() {
+        String command = "SELECT * FROM experiencia WHERE Estado='Ativo';";
+        try {
+            PreparedStatement statement = conn_sql.prepareStatement(command);
+            ResultSet result = statement.executeQuery();
+
+            while (result.next()) {
+                int id = result.getInt("IDExperiencia");
+                double ideal_temperature = default_ideal_temperature;
+                double max_temperature_variation = default_max_temperature_variation;
+                if (result.getObject("TemperaturaIdeal") != null) {
+                    ideal_temperature = result.getDouble("TemperaturaIdeal");
+                }
+                if (result.getObject("VariacaoTemperaturaMaxima") != null) {
+                    max_temperature_variation = result.getDouble("VariacaoTemperaturaMaxima");
+                }
+
+                setupExperiment(id, ideal_temperature, max_temperature_variation);
+            }
+
+            result.close();
+            statement.close();
+        } catch (Exception e) {
+            System.out.println("Error Selecting from the database . " + e);
+            System.out.println(command);
+        }
+
+        return null;
+    }
+
+    public double getAdicionalParameters(int id) {
+        String command = "SELECT * FROM parametrosadicionais WHERE IdExperiencia = " + id + ";";
+        try {
+            PreparedStatement statement = conn_sql.prepareStatement(command);
+            ResultSet result = statement.executeQuery();
+
+            while (result.next()) {
+                double gapTemperature = result.getInt("GapTemperatura");
+                return gapTemperature;
+            }
+
+            result.close();
+            statement.close();
+        } catch (Exception e) {
+            System.out.println("Error Selecting from the database . " + e);
+            System.out.println(command);
+            return -1;
+        }
+
+        System.out.println("ERROR: GAPRATOS RETURNED -1");
+        return -1;
+    }
+
+    public Experiment setupExperiment(int id, double ideal_temperature, double max_temperature_variation) {
+        System.out.println("\nA CRIAR: " + ideal_temperature + "\n");
+        if (experiment == null) {
+            experiment = new Experiment(id, ideal_temperature, max_temperature_variation, getAdicionalParameters(id));
+            System.out.println("EXPERIENCIA ATIVA - ID: " + experiment.getID() + " - TEMPERATURA IDEAL: "
+                    + experiment.getIdealTemperature() + " - VARIACAO MAXIMA DE TEMPERATURA: "
+                    + experiment.getMaxTemperatureVariation()
+                    + " - GAP DE TEMPERATURA: " + experiment.getGapTemperature());
+            return experiment;
+        } else {
+            if (experiment.getID() == id) {
+                System.out.println(
+                        "THIS EXPERIMENT ALREADY EXISTS - ID: " + experiment.getID() + " - TEMPERATURA IDEAL: "
+                                + experiment.getIdealTemperature() + " - VARIACAO MAXIMA DE TEMPERATURA: "
+                                + experiment.getMaxTemperatureVariation()
+                                + " - GAP DE TEMPERATURA: " + experiment.getGapTemperature());
+                return experiment;
+            } else {
+                experiment = new Experiment(id, ideal_temperature, max_temperature_variation,
+                        getAdicionalParameters(id));
+                System.out.println("EXPERIENCIA ATIVA - ID" + experiment.getID() + " - TEMPERATURA IDEAL: "
+                        + experiment.getIdealTemperature() + " - VARIACAO MAXIMA DE TEMPERATURA: "
+                        + experiment.getMaxTemperatureVariation()
+                        + " - GAP DE TEMPERATURA: " + experiment.getGapTemperature());
+                return experiment;
+            }
+        }
+    }
+
+    private boolean endExperiment() {
+        String command = "UPDATE experiencia SET Estado = 'Concluido' WHERE IdExperiencia = " + experiment.getID()
+                + ";";
+        try {
+            PreparedStatement statement = conn_sql.prepareStatement(command);
+            ResultSet result = statement.executeQuery();
+            experiment = null;
+            result.close();
+            statement.close();
+            return true;
+        } catch (Exception e) {
+            System.out.println("Error UPDATING the database . " + e);
+            System.out.println(command);
+            return false;
+        }
     }
 
     public void requestWithTimer() {
@@ -148,69 +304,200 @@ public class MongoTempsToJava {
                     }
 
                     if (docs != null) {
+                        createExperimentIfActive();
                         processData(docs);
                     }
+                } else {
+                    System.out.println("ERROR CONNECTING");
                 }
             }
         }, 0, frequency);
     }
 
     public void deleteOldMongoDocs() {
-        mongocol.deleteMany(new Document("_id", new Document("$lte", lastObjectId)));
+        DeleteResult result = mongocol.deleteMany(new Document("_id", new Document("$lte", lastObjectId)));
+        System.out.println("ERASED " + result.getDeletedCount() + " DOCS");
     }
 
     public void processData(FindIterable<Document> docs) {
-        boolean wroteTempToSQL = false;
         for (Document doc : docs) {
             String hour_string = (String) doc.get("Hora");
             String reading_string = String.valueOf(doc.get("Leitura"));
             String sensor_string = String.valueOf(doc.get("Sensor"));
-            if (!containsFaultyData(hour_string, reading_string, sensor_string)) {
+
+            Alert wrong_data_alert = containsFaultyData(hour_string, reading_string, sensor_string);
+            if (wrong_data_alert == null) {
                 LocalDateTime hour = LocalDateTime.parse(hour_string, date_formatter);
-                double reading = Double.valueOf(reading_string);
-                int sensor = Integer.valueOf(sensor_string);
+                DecimalFormat df = new DecimalFormat("#.##", new DecimalFormatSymbols(Locale.US));
+                double reading = Double.parseDouble(df.format(Double.valueOf(reading_string)));
+                System.out.println(reading);
+                int sensor_id = Integer.valueOf(sensor_string);
 
-                Temperature temperature = new Temperature(hour, reading, sensor);
+                Temperature temperature = new Temperature(hour, reading, sensor_id);
+                Sensor sensor;
+                boolean concluded = false;
 
-                if (checkOutliers(temperature)) {
-                    writeAlertToSQL(hour_string, sensor_string, reading_string, "Avaria", "Avaria - OUTLIERS");
+                if (experiment != null) {
+                    if (!experiment.existsSensor(sensor_id)) {
+                        sensor = new Sensor(sensor_id);
+                        experiment.getSensors().add(sensor);
+                    } else {
+                        sensor = experiment.getSensor(sensor_id);
+                    }
+
+                    if (checkOutliers(sensor, temperature)) {
+                        Alert alert = new Alert(null, null, null, sensor_string, reading_string, "AVARIA",
+                                "AVARIA - OUTLIERS - SENSOR: " + temperature.getSensor() + " - TEMPERATURA ANTIGA: "
+                                        + sensor.getLastTemperature().getReading() + " - TEMPERATURA NOVA: "
+                                        + temperature.getReading(),
+                                hour_string);
+                        if (writeAlertToSQL(alert)) {
+                            lastObjectId = (ObjectId) doc.get("_id");
+                        }
+                    } else {
+                        if (checkIntermediateVariation(temperature)) {
+                            Alert alert = new Alert(null, null, null, sensor_string, reading_string, "INTERMEDIO",
+                                    "TEMPERATURA PERTO DA VARIACAO MAXIMA - SENSOR: " + temperature.getSensor()
+                                            + " - TEMPERATURA: "
+                                            + temperature.getReading(),
+                                    hour_string);
+                            if (writeAlertToSQL(alert)) {
+                                lastObjectId = (ObjectId) doc.get("_id");
+                            }
+                        }
+                        if (checkCriticalVariation(temperature)) {
+                            Alert alert = new Alert(null, null, null, sensor_string, reading_string, "CRITICO",
+                                    "TEMPERATURA FORA DA VARIACAO MAXIMA - SENSOR: " + temperature.getSensor()
+                                            + " - TEMPERATURA: "
+                                            + temperature.getReading(),
+                                    hour_string);
+                            if (writeAlertToSQL(alert) && endExperiment()) {
+                                lastObjectId = (ObjectId) doc.get("_id");
+                                concluded = true;
+                            }
+                        }
+                    }
+                } else {
+                    if (checkIntermediateVariation(temperature)) {
+                        Alert alert = new Alert(null, null, null, sensor_string, reading_string, "INTERMEDIO",
+                                "TEMPERATURA FORA DA EXPERIENCIA PERTO DA VARIACAO MAXIMA DEFAULT - SENSOR: "
+                                        + temperature.getSensor()
+                                        + " - TEMPERATURA: "
+                                        + temperature.getReading(),
+                                hour_string);
+                        if (writeAlertToSQL(alert)) {
+                            lastObjectId = (ObjectId) doc.get("_id");
+                        }
+                    }
+
+                    if (checkCriticalVariation(temperature)) {
+                        Alert alert = new Alert(null, null, null, sensor_string, reading_string, "CRITICO",
+                                "TEMPERATURA FORA DA EXPERIENCIA FORA DA VARIACAO MAXIMA DEFAULT - SENSOR: "
+                                        + temperature.getSensor()
+                                        + " - TEMPERATURA: "
+                                        + temperature.getReading(),
+                                hour_string);
+                        if (writeAlertToSQL(alert)) {
+                            lastObjectId = (ObjectId) doc.get("_id");
+                        }
+                    }
                 }
 
-                wroteTempToSQL = writeTemperatureToSQL(temperature);
-
+                if (writeTemperatureToSQL(temperature) && !concluded) {
+                    lastObjectId = (ObjectId) doc.get("_id");
+                }
             } else {
-                writeAlertToSQL(hour_string, sensor_string, reading_string, "Avaria", "Avaria - WRONG DATA");
+                if (writeAlertToSQL(wrong_data_alert))
+                    lastObjectId = (ObjectId) doc.get("_id");
             }
-
-            if (wroteTempToSQL)
-                lastObjectId = (ObjectId) doc.get("_id");
         }
-
-        if (wroteTempToSQL)
-            deleteOldMongoDocs();
+        deleteOldMongoDocs();
     }
 
-    private boolean containsFaultyData(String hour, String reading, String sensor) {
-        try {
-            LocalDateTime.parse(hour, date_formatter);
-            Integer.parseInt(reading);
-            Integer.parseInt(sensor);
-        } catch (Exception e) {
-            return true;
+    private boolean checkIntermediateVariation(Temperature temperature) {
+        double maxGapValue, minGapValue;
+        double max_temperature, min_temperature;
+        if (experiment != null) {
+            double idealTemp = experiment.getIdealTemperature();
+            maxGapValue = idealTemp + experiment.getGapTemperature();
+            minGapValue = idealTemp - experiment.getGapTemperature();
+            max_temperature = idealTemp + experiment.getMaxTemperatureVariation();
+            min_temperature = idealTemp - experiment.getMaxTemperatureVariation();
+            if ((temperature.getReading() >= maxGapValue
+                    && temperature.getReading() < max_temperature)) {
+                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: " + idealTemp + " - MAX GAP: " + maxGapValue + " - MAX TEMPERATURA: " + max_temperature);
+                return true;
+            }
+            if (temperature.getReading() <= minGapValue
+                    && temperature.getReading() < min_temperature) {
+                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: " + idealTemp + " - MIN GAP: " + minGapValue + " - MIN TEMPERATURA: " + min_temperature);
+                return true;
+            }
+        } else {
+            maxGapValue = default_ideal_temperature + default_temperature_gap;
+            minGapValue = default_ideal_temperature - default_temperature_gap;
+            max_temperature = default_ideal_temperature + default_max_temperature_variation;
+            min_temperature = default_ideal_temperature - default_max_temperature_variation;
+            if (temperature.getReading() >= maxGapValue && temperature.getReading() < max_temperature) {
+                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: " + default_ideal_temperature + " - MAX GAP: " + maxGapValue + " - MAX TEMPERATURA: " + max_temperature);
+                return true;
+            }
+            if (temperature.getReading() <= minGapValue && temperature.getReading() > min_temperature) {
+                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: " + default_ideal_temperature + " - MIN GAP: " + minGapValue + " - MIN TEMPERATURA: " + min_temperature);
+                return true;
+            }
         }
 
         return false;
     }
 
-    private boolean checkOutliers(Temperature current_temp) {
-        if (last_temp == null) {
-            last_temp = current_temp;
+    private boolean checkCriticalVariation(Temperature temperature) {
+        double max_temperature, min_temperature;
+        if (experiment != null) {
+            double idealTemp = experiment.getIdealTemperature();
+            max_temperature = idealTemp + experiment.getMaxTemperatureVariation();
+            min_temperature = idealTemp - experiment.getMaxTemperatureVariation();
+            if (temperature.getReading() >= max_temperature
+                    || temperature.getReading() <= min_temperature) {
+                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: " + idealTemp + " - MIN TEMPERATURA: " + min_temperature + " - MAX TEMPERATURA: " + max_temperature);
+                return true;
+            }
+        } else {
+            max_temperature = default_ideal_temperature + default_max_temperature_variation;
+            min_temperature = default_ideal_temperature - default_max_temperature_variation;
+            if (temperature.getReading() >= max_temperature
+                    || temperature.getReading() <= min_temperature) {
+                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: " + default_ideal_temperature + " - MIN TEMPERATURA: " + min_temperature + " - MAX TEMPERATURA: " + max_temperature);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Alert containsFaultyData(String hour, String reading, String sensor) {
+        try {
+            LocalDateTime.parse(hour, date_formatter);
+            Double.parseDouble(reading);
+            Integer.parseInt(sensor);
+        } catch (Exception e) {
+            return new Alert(null, null, null, sensor, reading, "AVARIA",
+                    "AVARIA - WRONG DATA FORMAT - SENSOR: " + sensor + " - LEITURA: " + reading
+                            + " - HORA: " + hour,
+                    hour);
+        }
+
+        return null;
+    }
+
+    private boolean checkOutliers(Sensor sensor, Temperature current_temp) {
+        if (sensor.getLastTemperature() == null) {
+            sensor.setLastTemperature(current_temp);
             return false;
         }
 
-        if (declive(last_temp, current_temp) >= outlier_gap || declive(last_temp, current_temp) <= -outlier_gap) {
-            last_temp = current_temp;
-            counter_outliers++;
+        if (declive(sensor.getLastTemperature(), current_temp) >= experiment.getGapTemperature()
+                || declive(sensor.getLastTemperature(), current_temp) <= -experiment.getGapTemperature()) {
+            sensor.setLastTemperature(current_temp);
             return true;
         }
 
@@ -223,11 +510,11 @@ public class MongoTempsToJava {
         return Math.abs(difference / duration);
     }
 
-    private String SQLColumnsToString() {
+    private String SQLColumnsToString(String[] columns) {
         StringBuilder result = new StringBuilder();
-        for (int i = 0; i < sql_columns.length; i++) {
-            result.append(sql_columns[i]);
-            if (i < sql_columns.length - 1) {
+        for (int i = 0; i < columns.length; i++) {
+            result.append(columns[i]);
+            if (i < columns.length - 1) {
                 result.append(", ");
             }
         }
@@ -235,7 +522,8 @@ public class MongoTempsToJava {
     }
 
     private boolean writeTemperatureToSQL(Temperature temperature) {
-        String command = "Insert into " + sql_table_to + "(" + SQLColumnsToString() + ") values (?, ?, ?);";
+        String command = "Insert into " + sql_table_to + "(" + SQLColumnsToString(SQL_COLUMNS_TEMPERATURE)
+                + ") values (?, ?, ?);";
         try {
             PreparedStatement statement = conn_sql.prepareStatement(command);
             statement.setObject(1, temperature.getHour());
@@ -243,7 +531,7 @@ public class MongoTempsToJava {
             statement.setInt(3, temperature.getSensor());
             System.out.println(statement.toString());
             if (!conn_sql.isClosed()) {
-                int result = statement.executeUpdate();
+                statement.executeUpdate();
                 statement.close();
                 return true;
             } else {
@@ -257,9 +545,30 @@ public class MongoTempsToJava {
         }
     }
 
-    private void writeAlertToSQL(String hour, String sensor, String reading, String type, String message) {
-        Alert alert = new Alert(hour, null, sensor, reading, type, message);
-        System.out.println("Writing " + alert.getMessage() + " to SQL");
+    private boolean writeAlertToSQL(Alert alert) {
+        String command = "Insert into " + sql_table_alert + " (" + SQLColumnsToString(SQL_COLUMNS_ALERT)
+                + ") values (?, ?, ?, ?, ?);";
+        try {
+            PreparedStatement statement = conn_sql.prepareStatement(command);
+            statement.setString(1, alert.getSensor());
+            statement.setString(2, alert.getReading());
+            statement.setString(3, alert.getType());
+            statement.setString(4, alert.getMessage());
+            statement.setString(5, alert.getHour());
+            System.out.println(statement.toString());
+            if (!conn_sql.isClosed()) {
+                statement.executeUpdate();
+                statement.close();
+                return true;
+            } else {
+                System.out.println("ITEM NOT INSERTED BECAUSE MYSQL CONNECTION IS CLOSED");
+                return false;
+            }
+        } catch (Exception e) {
+            System.out.println("ERROR INSERTING IN DATABASE - " + e);
+            System.out.println(command);
+            return false;
+        }
     }
 
 }
