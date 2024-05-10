@@ -1,3 +1,4 @@
+import java.util.ArrayList;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.Timer;
@@ -56,7 +57,9 @@ public class MongoTempsToJava {
     static long frequency;
     Double default_temperature_gap;
     Double default_max_temperature_variation;
-    double default_ideal_temperature;
+    Double default_ideal_temperature;
+    Double default_outlier_gap;
+    Double outlier_gap;
     final String[] SQL_COLUMNS_TEMPERATURE = { "Hora", "Leitura", "Sensor" };
     final String[] SQL_COLUMNS_ALERT = { "Sensor", "Leitura", "TipoAlerta", "Mensagem", "HoraEscrita" };
     final DateTimeFormatter date_formatter = new DateTimeFormatterBuilder()
@@ -103,6 +106,7 @@ public class MongoTempsToJava {
             frequency = Long.parseLong(p.getProperty("frequency"));
             default_temperature_gap = Double.parseDouble(p.getProperty("default_temperature_gap"));
             default_max_temperature_variation = Double.parseDouble(p.getProperty("default_max_temperature_variation"));
+            default_outlier_gap = Double.parseDouble(p.getProperty("default_outlier_gap"));
         } catch (Exception e) {
             System.out.println("Error reading MongoTempsToJava.ini file " + e);
         }
@@ -132,7 +136,6 @@ public class MongoTempsToJava {
             }
             db = mongoClient.getDatabase(mongo_database);
             mongocol = db.getCollection(mongo_collection);
-            System.out.println("MONGO CONNECTED");
             return true;
         } catch (Exception e) {
             System.out.println("MONGO NOT CONNECTED");
@@ -175,7 +178,6 @@ public class MongoTempsToJava {
 
             while (result.next()) {
                 default_ideal_temperature = Double.parseDouble(result.getString("temperaturaprogramada"));
-                System.out.println(default_ideal_temperature);
             }
 
             result.close();
@@ -204,6 +206,7 @@ public class MongoTempsToJava {
                 }
 
                 setupExperiment(id, ideal_temperature, max_temperature_variation);
+
             }
 
             result.close();
@@ -216,15 +219,22 @@ public class MongoTempsToJava {
         return null;
     }
 
-    public double getAdicionalParameters(int id) {
+    public ArrayList<Double> getAdicionalParameters(int id) {
         String command = "SELECT * FROM parametrosadicionais WHERE IdExperiencia = " + id + ";";
         try {
             PreparedStatement statement = conn_sql.prepareStatement(command);
             ResultSet result = statement.executeQuery();
+            ArrayList<Double> parameters = new ArrayList<>();
 
             while (result.next()) {
-                double gapTemperature = result.getInt("GapTemperatura");
-                return gapTemperature;
+                parameters.add(result.getDouble("GapTemperatura"));
+                if (result.getObject("GapOutliers") != null) {
+                    parameters.add(result.getDouble("GapOutliers"));
+                } else {
+                    parameters.add(default_outlier_gap);
+                }
+
+                return parameters;
             }
 
             result.close();
@@ -232,21 +242,23 @@ public class MongoTempsToJava {
         } catch (Exception e) {
             System.out.println("Error Selecting from the database . " + e);
             System.out.println(command);
-            return -1;
+            return null;
         }
 
-        System.out.println("ERROR: GAPRATOS RETURNED -1");
-        return -1;
+        System.out.println("ERROR: FAILED TO GET ADITIONAL PARAMETERS");
+        return null;
     }
 
     public Experiment setupExperiment(int id, double ideal_temperature, double max_temperature_variation) {
-        System.out.println("\nA CRIAR: " + ideal_temperature + "\n");
+        ArrayList<Double> parameters = getAdicionalParameters(id);
         if (experiment == null) {
-            experiment = new Experiment(id, ideal_temperature, max_temperature_variation, getAdicionalParameters(id));
+            experiment = new Experiment(id, ideal_temperature, max_temperature_variation, parameters.get(0),
+                    parameters.get(1));
             System.out.println("EXPERIENCIA ATIVA - ID: " + experiment.getID() + " - TEMPERATURA IDEAL: "
                     + experiment.getIdealTemperature() + " - VARIACAO MAXIMA DE TEMPERATURA: "
                     + experiment.getMaxTemperatureVariation()
-                    + " - GAP DE TEMPERATURA: " + experiment.getGapTemperature());
+                    + " - GAP DE TEMPERATURA: " + experiment.getTemperatureGap()
+                    + " - GAP DE OUTLIERS: " + experiment.getOutlierGap());
             return experiment;
         } else {
             if (experiment.getID() == id) {
@@ -254,15 +266,17 @@ public class MongoTempsToJava {
                         "THIS EXPERIMENT ALREADY EXISTS - ID: " + experiment.getID() + " - TEMPERATURA IDEAL: "
                                 + experiment.getIdealTemperature() + " - VARIACAO MAXIMA DE TEMPERATURA: "
                                 + experiment.getMaxTemperatureVariation()
-                                + " - GAP DE TEMPERATURA: " + experiment.getGapTemperature());
+                                + " - GAP DE TEMPERATURA: " + experiment.getTemperatureGap()
+                                + " - GAP DE OUTLIERS: " + experiment.getOutlierGap());
                 return experiment;
             } else {
-                experiment = new Experiment(id, ideal_temperature, max_temperature_variation,
-                        getAdicionalParameters(id));
+                experiment = new Experiment(id, ideal_temperature, max_temperature_variation, parameters.get(0),
+                        parameters.get(1));
                 System.out.println("EXPERIENCIA ATIVA - ID" + experiment.getID() + " - TEMPERATURA IDEAL: "
                         + experiment.getIdealTemperature() + " - VARIACAO MAXIMA DE TEMPERATURA: "
                         + experiment.getMaxTemperatureVariation()
-                        + " - GAP DE TEMPERATURA: " + experiment.getGapTemperature());
+                        + " - GAP DE TEMPERATURA: " + experiment.getTemperatureGap()
+                        + " - GAP DE OUTLIERS: " + experiment.getOutlierGap());
                 return experiment;
             }
         }
@@ -330,7 +344,6 @@ public class MongoTempsToJava {
                 LocalDateTime hour = LocalDateTime.parse(hour_string, date_formatter);
                 DecimalFormat df = new DecimalFormat("#.##", new DecimalFormatSymbols(Locale.US));
                 double reading = Double.parseDouble(df.format(Double.valueOf(reading_string)));
-                System.out.println(reading);
                 int sensor_id = Integer.valueOf(sensor_string);
 
                 Temperature temperature = new Temperature(hour, reading, sensor_id);
@@ -349,7 +362,8 @@ public class MongoTempsToJava {
                         Alert alert = new Alert(null, null, null, sensor_string, reading_string, "AVARIA",
                                 "AVARIA - OUTLIERS - SENSOR: " + temperature.getSensor() + " - TEMPERATURA ANTIGA: "
                                         + sensor.getLastTemperature().getReading() + " - TEMPERATURA NOVA: "
-                                        + temperature.getReading(),
+                                        + temperature.getReading() + " - GAP DE OUTLIERS: "
+                                        + experiment.getOutlierGap(),
                                 hour_string);
                         if (writeAlertToSQL(alert)) {
                             lastObjectId = (ObjectId) doc.get("_id");
@@ -419,18 +433,20 @@ public class MongoTempsToJava {
         double max_temperature, min_temperature;
         if (experiment != null) {
             double idealTemp = experiment.getIdealTemperature();
-            maxGapValue = idealTemp + experiment.getGapTemperature();
-            minGapValue = idealTemp - experiment.getGapTemperature();
+            maxGapValue = idealTemp + experiment.getTemperatureGap();
+            minGapValue = idealTemp - experiment.getTemperatureGap();
             max_temperature = idealTemp + experiment.getMaxTemperatureVariation();
             min_temperature = idealTemp - experiment.getMaxTemperatureVariation();
             if ((temperature.getReading() >= maxGapValue
                     && temperature.getReading() < max_temperature)) {
-                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: " + idealTemp + " - MAX GAP: " + maxGapValue + " - MAX TEMPERATURA: " + max_temperature);
+                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: "
+                        + idealTemp + " - MAX GAP: " + maxGapValue + " - MAX TEMPERATURA: " + max_temperature);
                 return true;
             }
             if (temperature.getReading() <= minGapValue
-                    && temperature.getReading() < min_temperature) {
-                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: " + idealTemp + " - MIN GAP: " + minGapValue + " - MIN TEMPERATURA: " + min_temperature);
+                    && temperature.getReading() > min_temperature) {
+                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: "
+                        + idealTemp + " - MIN GAP: " + minGapValue + " - MIN TEMPERATURA: " + min_temperature);
                 return true;
             }
         } else {
@@ -439,11 +455,15 @@ public class MongoTempsToJava {
             max_temperature = default_ideal_temperature + default_max_temperature_variation;
             min_temperature = default_ideal_temperature - default_max_temperature_variation;
             if (temperature.getReading() >= maxGapValue && temperature.getReading() < max_temperature) {
-                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: " + default_ideal_temperature + " - MAX GAP: " + maxGapValue + " - MAX TEMPERATURA: " + max_temperature);
+                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: "
+                        + default_ideal_temperature + " - MAX GAP: " + maxGapValue + " - MAX TEMPERATURA: "
+                        + max_temperature);
                 return true;
             }
             if (temperature.getReading() <= minGapValue && temperature.getReading() > min_temperature) {
-                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: " + default_ideal_temperature + " - MIN GAP: " + minGapValue + " - MIN TEMPERATURA: " + min_temperature);
+                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: "
+                        + default_ideal_temperature + " - MIN GAP: " + minGapValue + " - MIN TEMPERATURA: "
+                        + min_temperature);
                 return true;
             }
         }
@@ -459,7 +479,9 @@ public class MongoTempsToJava {
             min_temperature = idealTemp - experiment.getMaxTemperatureVariation();
             if (temperature.getReading() >= max_temperature
                     || temperature.getReading() <= min_temperature) {
-                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: " + idealTemp + " - MIN TEMPERATURA: " + min_temperature + " - MAX TEMPERATURA: " + max_temperature);
+                System.out
+                        .println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: " + idealTemp
+                                + " - MIN TEMPERATURA: " + min_temperature + " - MAX TEMPERATURA: " + max_temperature);
                 return true;
             }
         } else {
@@ -467,7 +489,9 @@ public class MongoTempsToJava {
             min_temperature = default_ideal_temperature - default_max_temperature_variation;
             if (temperature.getReading() >= max_temperature
                     || temperature.getReading() <= min_temperature) {
-                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: " + default_ideal_temperature + " - MIN TEMPERATURA: " + min_temperature + " - MAX TEMPERATURA: " + max_temperature);
+                System.out.println("TEMPERATURA LIDA: " + temperature.getReading() + " - TEMPERATURA IDEAL: "
+                        + default_ideal_temperature + " - MIN TEMPERATURA: " + min_temperature + " - MAX TEMPERATURA: "
+                        + max_temperature);
                 return true;
             }
         }
@@ -489,14 +513,18 @@ public class MongoTempsToJava {
         return null;
     }
 
+
+    //TODO Declives muito pequenos com as medicoes do prof, problema?
     private boolean checkOutliers(Sensor sensor, Temperature current_temp) {
         if (sensor.getLastTemperature() == null) {
             sensor.setLastTemperature(current_temp);
             return false;
         }
 
-        if (declive(sensor.getLastTemperature(), current_temp) >= experiment.getGapTemperature()
-                || declive(sensor.getLastTemperature(), current_temp) <= -experiment.getGapTemperature()) {
+        System.out.println("DECLIVE: " + declive(sensor.getLastTemperature(), current_temp) + " - GAP OUTLIERS: "
+                + experiment.getOutlierGap());
+        if (declive(sensor.getLastTemperature(), current_temp) >= experiment.getOutlierGap()
+                || declive(sensor.getLastTemperature(), current_temp) <= -experiment.getOutlierGap()) {
             sensor.setLastTemperature(current_temp);
             return true;
         }

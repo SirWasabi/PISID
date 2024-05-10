@@ -5,14 +5,16 @@ public class Experiment {
     private int ID;
     private double idealTemperature;
     private double maxTemperatureVariation;
-    private double gapTemperature;
+    private double temperatureGap;
+    private double outlierGap;
     private ArrayList<Sensor> sensors = new ArrayList<Sensor>();
 
-    public Experiment(int ID, double idealTemperature, double maxTemperatureVariation, double gapTemperature) {
+    public Experiment(int ID, double idealTemperature, double maxTemperatureVariation, double temperatureGap, double outlierGap) {
         this.ID = ID;
         this.idealTemperature = idealTemperature;
         this.maxTemperatureVariation = maxTemperatureVariation;
-        this.gapTemperature = gapTemperature;
+        this.temperatureGap = temperatureGap;
+        this.outlierGap = outlierGap;
     }
 
     public int getID() {
@@ -27,8 +29,12 @@ public class Experiment {
         return maxTemperatureVariation;
     }
 
-    public double getGapTemperature() {
-        return gapTemperature;
+    public double getTemperatureGap() {
+        return temperatureGap;
+    }
+
+    public double getOutlierGap() {
+        return outlierGap;
     }
 
     public ArrayList<Sensor> getSensors() {
