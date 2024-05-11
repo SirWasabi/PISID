@@ -53,6 +53,8 @@ public class MongoMazeToJava {
     ObjectId lastObjectId = null;
     LocalDateTime lastPassageDate = null;
     long frequency;
+    int default_intermediate_interval;
+    LocalDateTime last_intermediate_alert = null;
     final String[] SQL_COLUMNS_PASSAGE = { "Hora", "SalaOrigem", "SalaDestino" };
     final String[] SQL_COLUMNS_ALERT = { "Sala", "SalaOrigem", "SalaDestino", "TipoAlerta", "Mensagem", "HoraEscrita" };
     final DateTimeFormatter date_formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
@@ -90,6 +92,7 @@ public class MongoMazeToJava {
             sql_maze_database_user_to = p.getProperty("sql_maze_database_user_to");
 
             frequency = Long.parseLong(p.getProperty("frequency"));
+            default_intermediate_interval = Integer.parseInt("default_intermediate_interval");
         } catch (Exception e) {
             System.out.println("Error reading MongoMazeToJava.ini file " + e);
         }
@@ -154,18 +157,25 @@ public class MongoMazeToJava {
                 int room_max = result.getInt("LimiteRatos");
                 int number_of_rats = result.getInt("NumeroRatos");
                 int maxWaitTime = result.getInt("SegundoSemMovimento");
+                int intermediate_interval = result.getInt("IntervaloIntermedio");
 
-                Maze maze = createMaze(id, room_max, number_of_rats);
+                Maze maze;
                 if (experiment == null) {
-                    return setupExperiment(id, maze, room_max, number_of_rats, maxWaitTime);
+                    maze = createMaze(id, room_max, number_of_rats);
+                    return setupExperiment(id, maze, room_max, number_of_rats, maxWaitTime, intermediate_interval);
                 } else {
                     if (experiment.getID() == id) {
                         System.out.println("THIS EXPERIMENT ALREADY EXISTS. ID: " + experiment.getID());
                         return experiment;
                     } else {
-                        return setupExperiment(id, maze, room_max, number_of_rats, maxWaitTime);
+                        maze = createMaze(id, room_max, number_of_rats);
+                        return setupExperiment(id, maze, room_max, number_of_rats, maxWaitTime, intermediate_interval);
                     }
                 }
+            }
+
+            if (experiment != null && !result.next()) {
+                experiment = null;
             }
 
             result.close();
@@ -241,10 +251,12 @@ public class MongoMazeToJava {
         return -1;
     }
 
-    public Experiment setupExperiment(int id, Maze maze, int room_max, int number_of_rats, int maxWaitTime) {
-        experiment = new Experiment(id, maze, maxWaitTime, getAdicionalParameters(id));
+    public Experiment setupExperiment(int id, Maze maze, int room_max, int number_of_rats, int maxWaitTime,
+            int intermediate_interval) {
+        experiment = new Experiment(id, maze, maxWaitTime, getAdicionalParameters(id), intermediate_interval);
         System.out.println("EXPERIENCIA ATIVA: " + experiment.getID() + " - NUMERO MAX POR SALA: "
-                + maze.getRoom_max() + " - NUMERO DE RATOS: " + maze.getNumber_of_rats() + " - TEMPO MAXIMO DE ESPERA: " + experiment.getMaxWaitTime());
+                + maze.getRoom_max() + " - NUMERO DE RATOS: " + maze.getNumber_of_rats() + " - TEMPO MAXIMO DE ESPERA: "
+                + experiment.getMaxWaitTime() + " - INTERVALO INTERMEDIO: " + experiment.getIntermediate_interval());
         return experiment;
     }
 
@@ -310,8 +322,11 @@ public class MongoMazeToJava {
                         Alert alert = new Alert(destinationRoom_string, originRoom_string, destinationRoom_string, null,
                                 null, "INTERMEDIO",
                                 "SALA (" + destinationRoom_string + ") PERTO DE CHEGAR AO SEU MAXIMO", hour_string);
-                        if (writeAlertToSQL(alert)) {
-                            lastObjectId = (ObjectId) doc.get("_id");
+                        if (canSendIntermediateAlert(LocalDateTime.now())) {
+                            if (writeAlertToSQL(alert)) {
+                                lastObjectId = (ObjectId) doc.get("_id");
+                                last_intermediate_alert = LocalDateTime.now();
+                            }
                         }
                     }
 
@@ -332,20 +347,25 @@ public class MongoMazeToJava {
                         if (writeAlertToSQL(alert) && endExperiment()) {
                             lastObjectId = (ObjectId) doc.get("_id");
                             concluded = true;
+                            lastPassageDate = null;
+                            last_intermediate_alert = null;
                         }
                     }
 
                     if (lastPassageDate != null) {
                         Duration duration = Duration.between(lastPassageDate, hour);
+                        System.out.println("LAST DATE: " + lastPassageDate + " - CURRENT DATE: " + hour);
                         System.out.println("DURATION: " + duration.toSeconds());
                         if (duration.toSeconds() >= experiment.getMaxWaitTime()) {
                             Alert alert = new Alert(destinationRoom_string, originRoom_string, destinationRoom_string,
                                     null,
                                     null, "CONCLUSAO",
                                     "CONCLUSAO - INATIVIDADE", hour_string);
-                            if(writeAlertToSQL(alert) && endExperiment()) {
+                            if (writeAlertToSQL(alert) && endExperiment()) {
                                 lastObjectId = (ObjectId) doc.get("_id");
                                 concluded = true;
+                                lastPassageDate = null;
+                                last_intermediate_alert = null;
                             }
                         }
                     }
@@ -357,8 +377,12 @@ public class MongoMazeToJava {
                     }
 
                 } else {
-                    if (writeAlertToSQL(wrong_data_alert))
-                        lastObjectId = (ObjectId) doc.get("_id");
+                    if (canSendIntermediateAlert(LocalDateTime.now())) {
+                        if (writeAlertToSQL(wrong_data_alert)) {
+                            lastObjectId = (ObjectId) doc.get("_id");
+                            last_intermediate_alert = LocalDateTime.now();
+                        }
+                    }
                 }
             }
         }
@@ -386,7 +410,8 @@ public class MongoMazeToJava {
 
     public void deleteMazeFile(int id) {
         File file = new File("src/maze" + id + ".txt");
-        if(file.exists()) file.delete();
+        if (file.exists())
+            file.delete();
     }
 
     private Alert containsFaultyData(String hour, String originRoom, String destinationRoom) {
@@ -464,6 +489,26 @@ public class MongoMazeToJava {
             System.out.println(command);
             return false;
         }
+    }
+
+    private boolean canSendIntermediateAlert(LocalDateTime current_time) {
+        if (last_intermediate_alert != null) {
+            if (Duration.between(last_intermediate_alert, current_time).toSeconds() > experiment
+                    .getIntermediate_interval()) {
+                System.out.println("DURATION SINCE LAST ALERT: "
+                        + Duration.between(last_intermediate_alert, current_time).toSeconds());
+                System.out.println("SENDING ALERT");
+                return true;
+            }
+        } else {
+            System.out.println("SENDING ALERT BECAUSE NULL");
+            return true;
+        }
+
+        System.out.println(
+                "DURATION SINCE LAST ALERT: " + Duration.between(last_intermediate_alert, current_time).toSeconds());
+        System.out.println("NOT SENDING ALERT");
+        return false;
     }
 
     private boolean writeAlertToSQL(Alert alert) {

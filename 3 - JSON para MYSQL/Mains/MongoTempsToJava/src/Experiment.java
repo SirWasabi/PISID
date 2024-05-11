@@ -7,14 +7,16 @@ public class Experiment {
     private double maxTemperatureVariation;
     private double temperatureGap;
     private double outlierGap;
+    private int intermediate_interval;
     private ArrayList<Sensor> sensors = new ArrayList<Sensor>();
 
-    public Experiment(int ID, double idealTemperature, double maxTemperatureVariation, double temperatureGap, double outlierGap) {
+    public Experiment(int ID, double idealTemperature, double maxTemperatureVariation, double temperatureGap, double outlierGap, int intermediate_interval) {
         this.ID = ID;
         this.idealTemperature = idealTemperature;
         this.maxTemperatureVariation = maxTemperatureVariation;
         this.temperatureGap = temperatureGap;
         this.outlierGap = outlierGap;
+        this.intermediate_interval = intermediate_interval;
     }
 
     public int getID() {
@@ -35,6 +37,10 @@ public class Experiment {
 
     public double getOutlierGap() {
         return outlierGap;
+    }
+    
+    public int getIntermediate_interval() {
+        return intermediate_interval;
     }
 
     public ArrayList<Sensor> getSensors() {

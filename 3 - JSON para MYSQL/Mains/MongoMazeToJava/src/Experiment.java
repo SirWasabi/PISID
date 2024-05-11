@@ -4,12 +4,14 @@ public class Experiment {
     private Maze maze;
     private int maxWaitTime;
     private int gapRatos;
+    private int intermediate_interval;
 
-    public Experiment(int ID, Maze maze, int maxWaitTime, int gapRatos) {
+    public Experiment(int ID, Maze maze, int maxWaitTime, int gapRatos, int intermediate_interval) {
         this.ID = ID;
         this.maze = maze;
         this.maxWaitTime = maxWaitTime;
         this.gapRatos = gapRatos;
+        this.intermediate_interval = intermediate_interval;
     }
 
     public int getID() {
@@ -26,5 +28,9 @@ public class Experiment {
 
     public int getGapRatos() {
         return gapRatos;
+    }
+
+    public int getIntermediate_interval() {
+        return intermediate_interval;
     }
 }

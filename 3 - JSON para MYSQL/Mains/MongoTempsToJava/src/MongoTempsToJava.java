@@ -59,7 +59,11 @@ public class MongoTempsToJava {
     Double default_max_temperature_variation;
     Double default_ideal_temperature;
     Double default_outlier_gap;
+    int default_intermediate_interval;
+    int default_critical_interval;
     Double outlier_gap;
+    LocalDateTime last_intermediate_alert = null;
+    LocalDateTime last_critical_alert = null;
     final String[] SQL_COLUMNS_TEMPERATURE = { "Hora", "Leitura", "Sensor" };
     final String[] SQL_COLUMNS_ALERT = { "Sensor", "Leitura", "TipoAlerta", "Mensagem", "HoraEscrita" };
     final DateTimeFormatter date_formatter = new DateTimeFormatterBuilder()
@@ -107,6 +111,8 @@ public class MongoTempsToJava {
             default_temperature_gap = Double.parseDouble(p.getProperty("default_temperature_gap"));
             default_max_temperature_variation = Double.parseDouble(p.getProperty("default_max_temperature_variation"));
             default_outlier_gap = Double.parseDouble(p.getProperty("default_outlier_gap"));
+            default_intermediate_interval = Integer.parseInt("default_intermediate_interval");
+            default_critical_interval = Integer.parseInt("default_critical_interval");
         } catch (Exception e) {
             System.out.println("Error reading MongoTempsToJava.ini file " + e);
         }
@@ -198,15 +204,23 @@ public class MongoTempsToJava {
                 int id = result.getInt("IDExperiencia");
                 double ideal_temperature = default_ideal_temperature;
                 double max_temperature_variation = default_max_temperature_variation;
+                int intermediate_interval = default_intermediate_interval;
+
                 if (result.getObject("TemperaturaIdeal") != null) {
                     ideal_temperature = result.getDouble("TemperaturaIdeal");
                 }
                 if (result.getObject("VariacaoTemperaturaMaxima") != null) {
                     max_temperature_variation = result.getDouble("VariacaoTemperaturaMaxima");
                 }
+                if (result.getObject("IntervaloIntermedio") != null) {
+                    intermediate_interval = result.getInt("IntervaloIntermedio");
+                }
 
-                setupExperiment(id, ideal_temperature, max_temperature_variation);
+                return setupExperiment(id, ideal_temperature, max_temperature_variation, intermediate_interval);
+            }
 
+            if (experiment != null && !result.next()) {
+                experiment = null;
             }
 
             result.close();
@@ -249,16 +263,19 @@ public class MongoTempsToJava {
         return null;
     }
 
-    public Experiment setupExperiment(int id, double ideal_temperature, double max_temperature_variation) {
+    public Experiment setupExperiment(int id, double ideal_temperature, double max_temperature_variation,
+            int intermediate_interval) {
         ArrayList<Double> parameters = getAdicionalParameters(id);
         if (experiment == null) {
             experiment = new Experiment(id, ideal_temperature, max_temperature_variation, parameters.get(0),
-                    parameters.get(1));
+                    parameters.get(1), intermediate_interval);
+            System.out.println(intermediate_interval);
             System.out.println("EXPERIENCIA ATIVA - ID: " + experiment.getID() + " - TEMPERATURA IDEAL: "
                     + experiment.getIdealTemperature() + " - VARIACAO MAXIMA DE TEMPERATURA: "
                     + experiment.getMaxTemperatureVariation()
                     + " - GAP DE TEMPERATURA: " + experiment.getTemperatureGap()
-                    + " - GAP DE OUTLIERS: " + experiment.getOutlierGap());
+                    + " - GAP DE OUTLIERS: " + experiment.getOutlierGap()
+                    + " - INTERVALO INTERMEDIO: " + experiment.getIntermediate_interval());
             return experiment;
         } else {
             if (experiment.getID() == id) {
@@ -267,16 +284,18 @@ public class MongoTempsToJava {
                                 + experiment.getIdealTemperature() + " - VARIACAO MAXIMA DE TEMPERATURA: "
                                 + experiment.getMaxTemperatureVariation()
                                 + " - GAP DE TEMPERATURA: " + experiment.getTemperatureGap()
-                                + " - GAP DE OUTLIERS: " + experiment.getOutlierGap());
+                                + " - GAP DE OUTLIERS: " + experiment.getOutlierGap()
+                                + " - INTERVALO INTERMEDIO: " + experiment.getIntermediate_interval());
                 return experiment;
             } else {
                 experiment = new Experiment(id, ideal_temperature, max_temperature_variation, parameters.get(0),
-                        parameters.get(1));
+                        parameters.get(1), intermediate_interval);
                 System.out.println("EXPERIENCIA ATIVA - ID" + experiment.getID() + " - TEMPERATURA IDEAL: "
                         + experiment.getIdealTemperature() + " - VARIACAO MAXIMA DE TEMPERATURA: "
                         + experiment.getMaxTemperatureVariation()
                         + " - GAP DE TEMPERATURA: " + experiment.getTemperatureGap()
-                        + " - GAP DE OUTLIERS: " + experiment.getOutlierGap());
+                        + " - GAP DE OUTLIERS: " + experiment.getOutlierGap()
+                        + " - INTERVALO INTERMEDIO: " + experiment.getIntermediate_interval());
                 return experiment;
             }
         }
@@ -365,8 +384,11 @@ public class MongoTempsToJava {
                                         + temperature.getReading() + " - GAP DE OUTLIERS: "
                                         + experiment.getOutlierGap(),
                                 hour_string);
-                        if (writeAlertToSQL(alert)) {
-                            lastObjectId = (ObjectId) doc.get("_id");
+                        if (canSendIntermediateAlert(LocalDateTime.now())) {
+                            if (writeAlertToSQL(alert)) {
+                                lastObjectId = (ObjectId) doc.get("_id");
+                                last_intermediate_alert = LocalDateTime.now();
+                            }
                         }
                     } else {
                         if (checkIntermediateVariation(temperature)) {
@@ -375,8 +397,11 @@ public class MongoTempsToJava {
                                             + " - TEMPERATURA: "
                                             + temperature.getReading(),
                                     hour_string);
-                            if (writeAlertToSQL(alert)) {
-                                lastObjectId = (ObjectId) doc.get("_id");
+                            if (canSendIntermediateAlert(LocalDateTime.now())) {
+                                if (writeAlertToSQL(alert)) {
+                                    lastObjectId = (ObjectId) doc.get("_id");
+                                    last_intermediate_alert = LocalDateTime.now();
+                                }
                             }
                         }
                         if (checkCriticalVariation(temperature)) {
@@ -385,13 +410,16 @@ public class MongoTempsToJava {
                                             + " - TEMPERATURA: "
                                             + temperature.getReading(),
                                     hour_string);
-                            if (writeAlertToSQL(alert) && endExperiment()) {
-                                lastObjectId = (ObjectId) doc.get("_id");
-                                concluded = true;
+                            if (canSendIntermediateAlert(LocalDateTime.now())) {
+                                if (writeAlertToSQL(alert) && endExperiment()) {
+                                    lastObjectId = (ObjectId) doc.get("_id");
+                                    concluded = true;
+                                }
                             }
                         }
                     }
                 } else {
+                    System.out.println("DEFAULT VALUES");
                     if (checkIntermediateVariation(temperature)) {
                         Alert alert = new Alert(null, null, null, sensor_string, reading_string, "INTERMEDIO",
                                 "TEMPERATURA FORA DA EXPERIENCIA PERTO DA VARIACAO MAXIMA DEFAULT - SENSOR: "
@@ -399,8 +427,11 @@ public class MongoTempsToJava {
                                         + " - TEMPERATURA: "
                                         + temperature.getReading(),
                                 hour_string);
-                        if (writeAlertToSQL(alert)) {
-                            lastObjectId = (ObjectId) doc.get("_id");
+                        if (canSendIntermediateAlert(LocalDateTime.now())) {
+                            if (writeAlertToSQL(alert)) {
+                                lastObjectId = (ObjectId) doc.get("_id");
+                                last_intermediate_alert = LocalDateTime.now();
+                            }
                         }
                     }
 
@@ -411,8 +442,11 @@ public class MongoTempsToJava {
                                         + " - TEMPERATURA: "
                                         + temperature.getReading(),
                                 hour_string);
-                        if (writeAlertToSQL(alert)) {
-                            lastObjectId = (ObjectId) doc.get("_id");
+                        if (canSendCriticalAlert(LocalDateTime.now())) {
+                            if (writeAlertToSQL(alert)) {
+                                lastObjectId = (ObjectId) doc.get("_id");
+                                last_critical_alert = LocalDateTime.now();
+                            }
                         }
                     }
                 }
@@ -421,8 +455,12 @@ public class MongoTempsToJava {
                     lastObjectId = (ObjectId) doc.get("_id");
                 }
             } else {
-                if (writeAlertToSQL(wrong_data_alert))
-                    lastObjectId = (ObjectId) doc.get("_id");
+                if (canSendIntermediateAlert(LocalDateTime.now())) {
+                    if (writeAlertToSQL(wrong_data_alert)) {
+                        lastObjectId = (ObjectId) doc.get("_id");
+                        last_intermediate_alert = LocalDateTime.now();
+                    }
+                }
             }
         }
         deleteOldMongoDocs();
@@ -513,16 +551,12 @@ public class MongoTempsToJava {
         return null;
     }
 
-
-    //TODO Declives muito pequenos com as medicoes do prof, problema?
     private boolean checkOutliers(Sensor sensor, Temperature current_temp) {
         if (sensor.getLastTemperature() == null) {
             sensor.setLastTemperature(current_temp);
             return false;
         }
 
-        System.out.println("DECLIVE: " + declive(sensor.getLastTemperature(), current_temp) + " - GAP OUTLIERS: "
-                + experiment.getOutlierGap());
         if (declive(sensor.getLastTemperature(), current_temp) >= experiment.getOutlierGap()
                 || declive(sensor.getLastTemperature(), current_temp) <= -experiment.getOutlierGap()) {
             sensor.setLastTemperature(current_temp);
@@ -571,6 +605,39 @@ public class MongoTempsToJava {
             System.out.println(command);
             return false;
         }
+    }
+
+    private boolean canSendIntermediateAlert(LocalDateTime current_time) {
+        if (last_intermediate_alert != null) {
+            if (Duration.between(last_intermediate_alert, current_time).toSeconds() > experiment
+                    .getIntermediate_interval()) {
+                        System.out.println("DURATION SINCE LAST ALERT: " + Duration.between(last_intermediate_alert, current_time).toSeconds());
+                        System.out.println("SENDING ALERT");
+                return true;
+            }
+        } else {
+            System.out.println("SENDING ALERT BECAUSE NULL");
+            return true;
+        }
+
+        System.out.println("DURATION SINCE LAST ALERT: " + Duration.between(last_intermediate_alert, current_time).toSeconds());
+        System.out.println("NOT SENDING ALERT");
+        return false;
+    }
+
+    private boolean canSendCriticalAlert(LocalDateTime current_time) {
+        if (last_critical_alert != null) {
+            if (Duration.between(last_critical_alert, current_time).toSeconds() > default_critical_interval) {
+                return true;
+            }
+        } else {
+            System.out.println("SENDING ALERT BECAUSE NULL");
+            return true;
+        }
+
+        System.out.println("DURATION SINCE LAST ALERT: " + Duration.between(last_intermediate_alert, current_time).toSeconds());
+        System.out.println("NOT SENDING ALERT");
+        return false;
     }
 
     private boolean writeAlertToSQL(Alert alert) {
