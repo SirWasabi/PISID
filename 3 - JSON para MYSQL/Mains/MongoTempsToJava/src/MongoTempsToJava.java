@@ -628,6 +628,7 @@ public class MongoTempsToJava {
     private boolean canSendCriticalAlert(LocalDateTime current_time) {
         if (last_critical_alert != null) {
             if (Duration.between(last_critical_alert, current_time).toSeconds() > default_critical_interval) {
+                System.out.println("DURATION SINCE LAST ALERT: " + Duration.between(last_critical_alert, current_time).toSeconds());
                 return true;
             }
         } else {
@@ -635,7 +636,6 @@ public class MongoTempsToJava {
             return true;
         }
 
-        System.out.println("DURATION SINCE LAST ALERT: " + Duration.between(last_intermediate_alert, current_time).toSeconds());
         System.out.println("NOT SENDING ALERT");
         return false;
     }

@@ -158,18 +158,21 @@ public class MongoMazeToJava {
                 int number_of_rats = result.getInt("NumeroRatos");
                 int maxWaitTime = result.getInt("SegundoSemMovimento");
                 int intermediate_interval = result.getInt("IntervaloIntermedio");
+                LocalDateTime startTime = LocalDateTime.parse(result.getString("DataComeco"));
 
                 Maze maze;
                 if (experiment == null) {
                     maze = createMaze(id, room_max, number_of_rats);
-                    return setupExperiment(id, maze, room_max, number_of_rats, maxWaitTime, intermediate_interval);
+                    return setupExperiment(id, maze, room_max, number_of_rats, maxWaitTime, intermediate_interval,
+                            startTime);
                 } else {
                     if (experiment.getID() == id) {
                         System.out.println("THIS EXPERIMENT ALREADY EXISTS. ID: " + experiment.getID());
                         return experiment;
                     } else {
                         maze = createMaze(id, room_max, number_of_rats);
-                        return setupExperiment(id, maze, room_max, number_of_rats, maxWaitTime, intermediate_interval);
+                        return setupExperiment(id, maze, room_max, number_of_rats, maxWaitTime, intermediate_interval,
+                                startTime);
                     }
                 }
             }
@@ -252,8 +255,9 @@ public class MongoMazeToJava {
     }
 
     public Experiment setupExperiment(int id, Maze maze, int room_max, int number_of_rats, int maxWaitTime,
-            int intermediate_interval) {
-        experiment = new Experiment(id, maze, maxWaitTime, getAdicionalParameters(id), intermediate_interval);
+            int intermediate_interval, LocalDateTime startTime) {
+        experiment = new Experiment(id, maze, maxWaitTime, getAdicionalParameters(id), intermediate_interval,
+                startTime);
         System.out.println("EXPERIENCIA ATIVA: " + experiment.getID() + " - NUMERO MAX POR SALA: "
                 + maze.getRoom_max() + " - NUMERO DE RATOS: " + maze.getNumber_of_rats() + " - TEMPO MAXIMO DE ESPERA: "
                 + experiment.getMaxWaitTime() + " - INTERVALO INTERMEDIO: " + experiment.getIntermediate_interval());
@@ -294,73 +298,66 @@ public class MongoMazeToJava {
         System.out.println("ERASED " + result.getDeletedCount() + " DOCS");
     }
 
-    public void processData(FindIterable<Document> docs) {
-        for (Document doc : docs) {
-            String hour_string = (String) doc.get("Hora");
-            String originRoom_string = String.valueOf((Integer) doc.get("SalaOrigem"));
-            String destinationRoom_string = String.valueOf((Integer) doc.get("SalaDestino"));
+    public void deleteAllPreviousMongoDocs() {
+        DeleteResult result = mongocol.deleteMany(new Document());
+        System.out.println("ERASED " + result.getDeletedCount() + " DOCS BECAUSE NO EXPERIMENT IS ACTIVE");
+    }
 
-            if (experiment != null) {
+    public void processData(FindIterable<Document> docs) {
+        if (experiment != null) {
+            for (Document doc : docs) {
+                String hour_string = (String) doc.get("Hora");
+                String originRoom_string = String.valueOf((Integer) doc.get("SalaOrigem"));
+                String destinationRoom_string = String.valueOf((Integer) doc.get("SalaDestino"));
+
                 Alert wrong_data_alert = containsFaultyData(hour_string, originRoom_string, destinationRoom_string);
                 if (wrong_data_alert == null) {
                     LocalDateTime hour = LocalDateTime.parse(hour_string, date_formatter);
                     int originRoom = Integer.valueOf(originRoom_string);
                     int destinationRoom = Integer.valueOf(destinationRoom_string);
 
-                    Maze maze = experiment.getMaze();
-                    Passage passage = new Passage(hour, originRoom, destinationRoom);
+                    if (hour.isAfter(experiment.getStartTime())) {
 
-                    Room origin = maze.getRoom(originRoom);
-                    Room destination = maze.getRoom(destinationRoom);
-                    if (maze.getRoom(originRoom).getPopulation() != 0) {
-                        origin.setPopulation(origin.getPopulation() - 1);
-                        destination.setPopulation(destination.getPopulation() + 1);
-                    }
+                        Maze maze = experiment.getMaze();
+                        Passage passage = new Passage(hour, originRoom, destinationRoom);
 
-                    if (maze.getRoom(destinationRoom).getPopulation() >= (maze.getRoom_max() - experiment.getGapRatos())
-                            && maze.getRoom(destinationRoom).getPopulation() < experiment.getMaze().getRoom_max()) {
-                        Alert alert = new Alert(destinationRoom_string, originRoom_string, destinationRoom_string, null,
-                                null, "INTERMEDIO",
-                                "SALA (" + destinationRoom_string + ") PERTO DE CHEGAR AO SEU MAXIMO", hour_string);
-                        if (canSendIntermediateAlert(LocalDateTime.now())) {
-                            if (writeAlertToSQL(alert)) {
-                                lastObjectId = (ObjectId) doc.get("_id");
-                                last_intermediate_alert = LocalDateTime.now();
-                            }
+                        Room origin = maze.getRoom(originRoom);
+                        Room destination = maze.getRoom(destinationRoom);
+                        if (maze.getRoom(originRoom).getPopulation() != 0) {
+                            origin.setPopulation(origin.getPopulation() - 1);
+                            destination.setPopulation(destination.getPopulation() + 1);
                         }
-                    }
 
-                    for (Room r : maze.getRooms()) {
-                        if (r.getRoomID() == originRoom)
-                            System.out.println(r.getRoomID() + " - " + r.getPopulation() + " <-- FROM");
-                        else if (r.getRoomID() == destinationRoom)
-                            System.out.println(r.getRoomID() + " - " + r.getPopulation() + " <-- TO");
-                        else
-                            System.out.println(r.getRoomID() + " - " + r.getPopulation());
-                    }
-
-                    boolean concluded = false;
-                    if (maze.checkRoomMax(destinationRoom)) {
-                        Alert alert = new Alert(destinationRoom_string, originRoom_string, destinationRoom_string, null,
-                                null, "CRITICO",
-                                "SALA (" + destinationRoom_string + ") CHEIA", hour_string);
-                        if (writeAlertToSQL(alert) && endExperiment()) {
-                            lastObjectId = (ObjectId) doc.get("_id");
-                            concluded = true;
-                            lastPassageDate = null;
-                            last_intermediate_alert = null;
-                        }
-                    }
-
-                    if (lastPassageDate != null) {
-                        Duration duration = Duration.between(lastPassageDate, hour);
-                        System.out.println("LAST DATE: " + lastPassageDate + " - CURRENT DATE: " + hour);
-                        System.out.println("DURATION: " + duration.toSeconds());
-                        if (duration.toSeconds() >= experiment.getMaxWaitTime()) {
+                        if (maze.getRoom(destinationRoom)
+                                .getPopulation() >= (maze.getRoom_max() - experiment.getGapRatos())
+                                && maze.getRoom(destinationRoom).getPopulation() < experiment.getMaze().getRoom_max()) {
                             Alert alert = new Alert(destinationRoom_string, originRoom_string, destinationRoom_string,
                                     null,
-                                    null, "CONCLUSAO",
-                                    "CONCLUSAO - INATIVIDADE", hour_string);
+                                    null, "INTERMEDIO",
+                                    "SALA (" + destinationRoom_string + ") PERTO DE CHEGAR AO SEU MAXIMO", hour_string);
+                            if (canSendIntermediateAlert(LocalDateTime.now())) {
+                                if (writeAlertToSQL(alert)) {
+                                    lastObjectId = (ObjectId) doc.get("_id");
+                                    last_intermediate_alert = LocalDateTime.now();
+                                }
+                            }
+                        }
+
+                        for (Room r : maze.getRooms()) {
+                            if (r.getRoomID() == originRoom)
+                                System.out.println(r.getRoomID() + " - " + r.getPopulation() + " <-- FROM");
+                            else if (r.getRoomID() == destinationRoom)
+                                System.out.println(r.getRoomID() + " - " + r.getPopulation() + " <-- TO");
+                            else
+                                System.out.println(r.getRoomID() + " - " + r.getPopulation());
+                        }
+
+                        boolean concluded = false;
+                        if (maze.checkRoomMax(destinationRoom)) {
+                            Alert alert = new Alert(destinationRoom_string, originRoom_string, destinationRoom_string,
+                                    null,
+                                    null, "CRITICO",
+                                    "SALA (" + destinationRoom_string + ") CHEIA", hour_string);
                             if (writeAlertToSQL(alert) && endExperiment()) {
                                 lastObjectId = (ObjectId) doc.get("_id");
                                 concluded = true;
@@ -368,12 +365,31 @@ public class MongoMazeToJava {
                                 last_intermediate_alert = null;
                             }
                         }
-                    }
 
-                    if (writePassageToSQL(passage) && !concluded) {
-                        lastObjectId = (ObjectId) doc.get("_id");
-                        lastPassageDate = hour;
-                        saveMazeToFile(maze, experiment.getID());
+                        if (lastPassageDate != null) {
+                            Duration duration = Duration.between(lastPassageDate, hour);
+                            System.out.println("LAST DATE: " + lastPassageDate + " - CURRENT DATE: " + hour);
+                            System.out.println("DURATION: " + duration.toSeconds());
+                            if (duration.toSeconds() >= experiment.getMaxWaitTime()) {
+                                Alert alert = new Alert(destinationRoom_string, originRoom_string,
+                                        destinationRoom_string,
+                                        null,
+                                        null, "CONCLUSAO",
+                                        "CONCLUSAO - INATIVIDADE", hour_string);
+                                if (writeAlertToSQL(alert) && endExperiment()) {
+                                    lastObjectId = (ObjectId) doc.get("_id");
+                                    concluded = true;
+                                    lastPassageDate = null;
+                                    last_intermediate_alert = null;
+                                }
+                            }
+                        }
+
+                        if (writePassageToSQL(passage) && !concluded) {
+                            lastObjectId = (ObjectId) doc.get("_id");
+                            lastPassageDate = hour;
+                            saveMazeToFile(maze, experiment.getID());
+                        }
                     }
 
                 } else {
