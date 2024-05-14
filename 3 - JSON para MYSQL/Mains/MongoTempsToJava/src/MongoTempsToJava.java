@@ -111,8 +111,8 @@ public class MongoTempsToJava {
             default_temperature_gap = Double.parseDouble(p.getProperty("default_temperature_gap"));
             default_max_temperature_variation = Double.parseDouble(p.getProperty("default_max_temperature_variation"));
             default_outlier_gap = Double.parseDouble(p.getProperty("default_outlier_gap"));
-            default_intermediate_interval = Integer.parseInt("default_intermediate_interval");
-            default_critical_interval = Integer.parseInt("default_critical_interval");
+            default_intermediate_interval = Integer.parseInt(p.getProperty("default_intermediate_interval"));
+            default_critical_interval = Integer.parseInt(p.getProperty("default_critical_interval"));
         } catch (Exception e) {
             System.out.println("Error reading MongoTempsToJava.ini file " + e);
         }

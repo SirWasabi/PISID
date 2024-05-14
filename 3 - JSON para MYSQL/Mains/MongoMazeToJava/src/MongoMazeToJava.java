@@ -92,7 +92,7 @@ public class MongoMazeToJava {
             sql_maze_database_user_to = p.getProperty("sql_maze_database_user_to");
 
             frequency = Long.parseLong(p.getProperty("frequency"));
-            default_intermediate_interval = Integer.parseInt("default_intermediate_interval");
+            default_intermediate_interval = Integer.parseInt(p.getProperty("default_intermediate_interval"));
         } catch (Exception e) {
             System.out.println("Error reading MongoMazeToJava.ini file " + e);
         }
