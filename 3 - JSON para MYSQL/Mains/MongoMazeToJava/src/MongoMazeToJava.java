@@ -10,6 +10,8 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.temporal.ChronoField;
 
 import org.bson.Document;
 import org.bson.types.ObjectId;
@@ -57,7 +59,12 @@ public class MongoMazeToJava {
     LocalDateTime last_intermediate_alert = null;
     final String[] SQL_COLUMNS_PASSAGE = { "Hora", "SalaOrigem", "SalaDestino" };
     final String[] SQL_COLUMNS_ALERT = { "Sala", "SalaOrigem", "SalaDestino", "TipoAlerta", "Mensagem", "HoraEscrita" };
-    final DateTimeFormatter date_formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
+    final DateTimeFormatter date_formatter = new DateTimeFormatterBuilder()
+            .appendPattern("yyyy-MM-dd HH:mm:ss")
+            .optionalStart()
+            .appendFraction(ChronoField.MICRO_OF_SECOND, 1, 6, true)
+            .optionalEnd()
+            .toFormatter();
 
     public static void main(String[] args) {
         MongoMazeToJava conn = new MongoMazeToJava();
@@ -140,6 +147,7 @@ public class MongoMazeToJava {
             }
         } catch (SQLException | ClassNotFoundException e) {
             System.out.println("MYSQL SERVER IS NOT CONNECTED");
+            e.printStackTrace();
             return false;
         }
 
@@ -158,7 +166,8 @@ public class MongoMazeToJava {
                 int number_of_rats = result.getInt("NumeroRatos");
                 int maxWaitTime = result.getInt("SegundoSemMovimento");
                 int intermediate_interval = result.getInt("IntervaloIntermedio");
-                LocalDateTime startTime = LocalDateTime.parse(result.getString("DataComeco"));
+                String date = result.getString("DataComeco");
+                LocalDateTime startTime = LocalDateTime.parse(date, date_formatter);
 
                 Maze maze;
                 if (experiment == null) {
@@ -260,7 +269,8 @@ public class MongoMazeToJava {
                 startTime);
         System.out.println("EXPERIENCIA ATIVA: " + experiment.getID() + " - NUMERO MAX POR SALA: "
                 + maze.getRoom_max() + " - NUMERO DE RATOS: " + maze.getNumber_of_rats() + " - TEMPO MAXIMO DE ESPERA: "
-                + experiment.getMaxWaitTime() + " - INTERVALO INTERMEDIO: " + experiment.getIntermediate_interval());
+                + experiment.getMaxWaitTime() + " - INTERVALO INTERMEDIO: " + experiment.getIntermediate_interval()
+                + " - DATA COMEÇO: " + experiment.getStartTime());
         return experiment;
     }
 
@@ -315,6 +325,8 @@ public class MongoMazeToJava {
                     LocalDateTime hour = LocalDateTime.parse(hour_string, date_formatter);
                     int originRoom = Integer.valueOf(originRoom_string);
                     int destinationRoom = Integer.valueOf(destinationRoom_string);
+
+                    System.out.println(hour + " - " + experiment.getStartTime() + " - " + hour.isAfter(experiment.getStartTime()));
 
                     if (hour.isAfter(experiment.getStartTime())) {
 
